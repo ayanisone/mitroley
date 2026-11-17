@@ -65,23 +65,13 @@ struct FollowScroll: ViewModifier {
     }
 }
 
-/// A pinch in progress: how far the timeline is stretched beyond the zoom it was last laid out at.
+/// A pinch in progress: the zoom the fingers have reached, before the real timeline has been laid out at it.
 @Observable final class ZoomLive {
-    var kx = 1.0
-    var ky = 1.0
-    /// The point in the timeline (in points from its left edge) that stays put while it stretches.
-    var anchor: CGFloat = 0
-}
-
-/// Stretches its content with the pinch. Only this small wrapper follows the pinch; the lanes inside are not re-evaluated.
-struct ZoomTransform: ViewModifier {
-    @Environment(ZoomLive.self) private var live
-    /// Width of the content, to place the anchor. 0 = this content does not stretch sideways (the track names).
-    let width: CGFloat
-    /// Whether this content grows taller with a track-height pinch.
-    let vertical: Bool
-    func body(content: Content) -> some View {
-        content.scaleEffect(x: width > 0 ? live.kx : 1, y: vertical ? live.ky : 1,
-                            anchor: UnitPoint(x: width > 0 ? live.anchor / width : 0, y: 0))
-    }
+    /// True while the one-pass drawing stands in for the real timeline.
+    var active = false
+    /// Points per second and scroll offset the drawing uses.
+    var pps = 1.0
+    var x: CGFloat = 0
+    /// The zoom (or track height factor) to commit.
+    @ObservationIgnored var target = 0.0
 }

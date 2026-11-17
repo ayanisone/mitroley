@@ -499,19 +499,21 @@ final class Commands {
             }
             return CommandResult(json: ["ok": true, "time": r(store.player.time), "playing": store.player.isPlaying])
         case "debug_zoom":
-            // Not listed as a tool: stretches the timeline the way a pinch does for a few seconds and reports how often the main thread got a turn.
+            // Not listed as a tool: drives the pinch drawing for a few seconds and reports how often the main thread got a turn.
             let seconds = a.num("seconds") ?? 4
             let start = CACurrentMediaTime()
             var last = start, worst = 0.0, steps = 0
-            store.zoomLive.anchor = 300
+            let base = Double(1200) / max(1, store.project.duration) * store.zoom
+            store.zoomLive.active = true
             while CACurrentMediaTime() - start < seconds {
                 let u = (CACurrentMediaTime() - start) / seconds
-                store.zoomLive.kx = 1 + 2 * (0.5 - 0.5 * cos(u * 2 * .pi))
+                store.zoomLive.pps = base * (1 + 5 * (0.5 - 0.5 * cos(u * 2 * .pi)))
+                store.zoomLive.x = CGFloat(20 * store.zoomLive.pps) - 300
                 try await Task.sleep(nanoseconds: 4_000_000)
                 let now = CACurrentMediaTime()
                 worst = max(worst, now - last); last = now; steps += 1
             }
-            store.zoomLive.kx = 1
+            store.zoomLive.active = false
             return CommandResult(json: ["steps": steps, "per_second": Double(steps) / seconds, "worst_ms": worst * 1000])
         case "focus":
             if let id = UUID(uuidString: a.str("clip") ?? ""), let l = store.project.locate(clip: id) {

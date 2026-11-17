@@ -8,6 +8,7 @@ struct TimelineView: View {
     @State private var pinch: (zoom: Double, vzoom: Double, time: Double, x: CGFloat, vertical: Bool, base: CGFloat)?
     private var live: ZoomLive { store.zoomLive }
     @State private var settle: Task<Void, Never>?
+    @State private var lastHeight = 0.0
 
     var body: some View {
         GeometryReader { geo in
@@ -30,7 +31,6 @@ struct TimelineView: View {
                         PlayheadView(pps: pps, handle: true)
                     }
                     .frame(width: contentWidth, alignment: .topLeading)
-                    .modifier(ZoomTransform(width: contentWidth, vertical: false))
                     .modifier(FollowScroll(direction: -1))
                     .frame(width: visible, alignment: .leading)
                     .clipped()
@@ -48,7 +48,6 @@ struct TimelineView: View {
                             Rectangle().fill(Theme.line).frame(width: 1)
                         }
                         .background(Theme.panel)
-                        .modifier(ZoomTransform(width: 0, vertical: true))
                         .modifier(FollowScroll(direction: 1))
                         .zIndex(1)
                         ZStack(alignment: .topLeading) {
@@ -73,7 +72,6 @@ struct TimelineView: View {
                         }
                         .frame(width: contentWidth, alignment: .topLeading)
                         .coordinateSpace(.named("lanes"))
-                        .modifier(ZoomTransform(width: contentWidth, vertical: true))
                     }
                     .frame(minHeight: max(0, geo.size.height - pinned), alignment: .top)
                 }
@@ -82,9 +80,16 @@ struct TimelineView: View {
                     scroll.set(x: o.x, y: o.y)
                 }
             }
+            // While a pinch is under way the timeline is drawn in one pass at the zoom the fingers have reached.
+            .overlay(alignment: .topLeading) {
+                ZoomPreview()
+                    .frame(width: visible, height: geo.size.height)
+                    .clipped()
+                    .padding(.leading, Metrics.header + 1)
+            }
             // Pinch to zoom around the pointer. Hold Option and pinch to make the tracks taller or shorter.
-            // While the fingers move, the timeline already on screen is stretched on the GPU, which costs nothing;
-            // it is laid out again at the new zoom once, when the pinch pauses or ends.
+            // Laying out every clip on every tick of a pinch is too slow, so the pinch drives a one-pass drawing of the
+            // timeline (ZoomPreview), and the real timeline is laid out once when the pinch pauses or ends.
             .gesture(MagnifyGesture()
                 .onChanged { g in
                     if pinch == nil {
@@ -94,24 +99,34 @@ struct TimelineView: View {
                     guard let start = pinch else { return }
                     let m = Double(g.magnification / start.base)
                     if start.vertical {
-                        live.ky = min(3, max(0.75, start.vzoom * m)) / start.vzoom
-                    } else {
-                        live.kx = min(40, max(1, start.zoom * m)) / start.zoom
-                        live.anchor = CGFloat(start.time * pps)
+                        // Track height: laid out for real, a few times a second.
+                        let now = CACurrentMediaTime()
+                        if now - lastHeight > 0.1 {
+                            lastHeight = now
+                            store.vzoom = min(3, max(0.75, start.vzoom * m))
+                        }
+                        live.target = min(3, max(0.75, start.vzoom * m))
+                        return
                     }
+                    let zoom = min(40, max(1, start.zoom * m))
+                    live.target = zoom
+                    live.pps = Double(visible - 24) / duration * zoom
+                    // Keep the moment under the pointer under the pointer.
+                    live.x = max(0, CGFloat(start.time * live.pps) - start.x)
+                    live.active = true
                     let magnification = g.magnification
                     settle?.cancel()
                     settle = Task {
-                        try? await Task.sleep(nanoseconds: 220_000_000)
+                        try? await Task.sleep(nanoseconds: 300_000_000)
                         guard !Task.isCancelled, let now = pinch else { return }
-                        commitZoom(visible: visible, duration: duration)
+                        commitZoom()
                         // Carry on from the new zoom if the fingers are still down.
                         pinch = (store.zoom, store.vzoom, now.time, now.x, now.vertical, magnification)
                     }
                 }
                 .onEnded { _ in
                     settle?.cancel()
-                    commitZoom(visible: visible, duration: duration)
+                    commitZoom()
                     pinch = nil
                 })
             .onChange(of: visible, initial: true) { _, v in scroll.width = v }
@@ -121,19 +136,21 @@ struct TimelineView: View {
         .background(Theme.panel)
     }
 
-    /// Lays the timeline out at the zoom the pinch has reached, keeping the moment under the pointer where it is.
-    private func commitZoom(visible: CGFloat, duration: Double) {
-        guard let start = pinch, live.kx != 1 || live.ky != 1 else { return }
+    /// Lays the real timeline out at the zoom the pinch has reached, scrolled to where the drawing was.
+    private func commitZoom() {
+        guard let start = pinch else { return }
         if start.vertical {
-            store.vzoom = min(3, max(0.75, start.vzoom * live.ky))
-        } else {
-            let zoom = min(40, max(1, start.zoom * live.kx))
-            store.zoom = zoom
-            let next = Double(visible - 24) / duration * zoom
-            position.scrollTo(point: CGPoint(x: max(0, CGFloat(start.time * next) - start.x), y: max(0, scroll.y)))
+            if live.target > 0 { store.vzoom = live.target }
+        } else if live.active {
+            store.zoom = live.target
+            position.scrollTo(point: CGPoint(x: live.x, y: max(0, scroll.y)))
+            // The drawing stays up for a moment so the real timeline never shows half laid out.
+            Task {
+                try? await Task.sleep(nanoseconds: 60_000_000)
+                if settle?.isCancelled != false || pinch == nil { live.active = false } else { live.active = false }
+            }
         }
-        live.kx = 1
-        live.ky = 1
+        live.target = 0
     }
 }
 
@@ -1285,45 +1302,50 @@ struct WaveCanvas: View, Equatable {
 
     var body: some View {
         Canvas { ctx, size in
-            guard let url else { return }
-            let peaks = AudioCache.shared.peaks(url)
-            guard peaks.count > 1 else { return }
-            let rate = AudioCache.peaksPerSecond
-            let gain = Float(dbToLinear(clip.gain))
-            let mid = size.height / 2
-            let n = Int(size.width)
-            let span = max(1, Int(rate / pps))
-            var top: [CGPoint] = []
-            top.reserveCapacity(n + 1)
-            var x = 0
-            while x <= n {
-                let rel = Double(from + CGFloat(x)) / pps
-                var idx = Int((clip.offset + rel * clip.speed) * rate)
-                if clip.loop { idx %= peaks.count } else if idx >= peaks.count { break }
-                var m: Float = 0
-                var k = 0
-                while k < span {
-                    let j = clip.loop ? (idx + k) % peaks.count : min(peaks.count - 1, idx + k)
-                    if peaks[j] > m { m = peaks[j] }
-                    k += 1
-                }
-                var env: Float = 1
-                if clip.fadeIn > 0, rel < clip.fadeIn { env *= clip.inShape.gain(Float(rel / clip.fadeIn)) }
-                let left = clip.duration - rel
-                if clip.fadeOut > 0, left < clip.fadeOut { env *= clip.outShape.gain(Float(max(0, left) / clip.fadeOut)) }
-                let a = CGFloat(min(1, sqrt(m * gain * env)))   // sqrt lifts quiet detail into view
-                top.append(CGPoint(x: CGFloat(x), y: mid - max(0.5, a * mid)))
-                x += 1
-            }
-            guard top.count > 1 else { return }
-            var path = Path()
-            path.move(to: top[0])
-            for p in top.dropFirst() { path.addLine(to: p) }
-            for p in top.reversed() { path.addLine(to: CGPoint(x: p.x, y: 2 * mid - p.y)) }
-            path.closeSubpath()
-            ctx.fill(path, with: .color(color.opacity(0.95)))
+            ctx.fill(Self.path(clip: clip, url: url, pps: pps, from: from, width: size.width, height: size.height), with: .color(color.opacity(0.95)))
         }
         .allowsHitTesting(false)
+    }
+
+    /// The waveform's outline for `width` points of a clip starting `from` points in, in a box `height` tall.
+    static func path(clip: Clip, url: URL?, pps: Double, from: CGFloat, width: CGFloat, height: CGFloat) -> Path {
+        guard let url else { return Path() }
+        let peaks = AudioCache.shared.peaks(url)
+        guard peaks.count > 1 else { return Path() }
+        let rate = AudioCache.peaksPerSecond
+        let gain = Float(dbToLinear(clip.gain))
+        let mid = height / 2
+        let n = Int(width)
+        let span = max(1, Int(rate / pps))
+        var top: [CGPoint] = []
+        top.reserveCapacity(n + 1)
+        var x = 0
+        while x <= n {
+            let rel = Double(from + CGFloat(x)) / pps
+            var idx = Int((clip.offset + rel * clip.speed) * rate)
+            if clip.loop { idx %= peaks.count } else if idx >= peaks.count { break }
+            var m: Float = 0
+            var k = 0
+            while k < span {
+                let j = clip.loop ? (idx + k) % peaks.count : min(peaks.count - 1, idx + k)
+                if peaks[j] > m { m = peaks[j] }
+                k += 1
+            }
+            var env: Float = 1
+            if clip.fadeIn > 0, rel < clip.fadeIn { env *= clip.inShape.gain(Float(rel / clip.fadeIn)) }
+            let left = clip.duration - rel
+            if clip.fadeOut > 0, left < clip.fadeOut { env *= clip.outShape.gain(Float(max(0, left) / clip.fadeOut)) }
+            let a = CGFloat(min(1, sqrt(m * gain * env)))   // sqrt lifts quiet detail into view
+            top.append(CGPoint(x: CGFloat(x), y: mid - max(0.5, a * mid)))
+            x += 1
+        }
+        guard top.count > 1 else { return Path() }
+        var path = Path()
+        path.move(to: top[0])
+        for p in top.dropFirst() { path.addLine(to: p) }
+        for p in top.reversed() { path.addLine(to: CGPoint(x: p.x, y: 2 * mid - p.y)) }
+        path.closeSubpath()
+        return path
     }
 }
 
