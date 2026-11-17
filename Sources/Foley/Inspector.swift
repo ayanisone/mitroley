@@ -466,11 +466,26 @@ struct SpacePanel: View {
         QuietField(placeholder: "Name", text: Binding(get: { space.name }, set: { v in live { $0.name = v } }))
 
         SectionTitle("Room")
+        SegmentedPill(options: [(false, "Built-in reverb"), (true, "IR reverb")], selection: space.ir != nil, segmentWidth: 124) { useIR in
+            if useIR { if space.ir == nil { store.chooseIR(space: space.id) } }
+            else { store.mutate { p in if let i = p.spaces.firstIndex(where: { $0.id == space.id }) { p.spaces[i].ir = nil } } }
+        }
+        if let ir = space.ir {
+            HStack(spacing: 8) {
+                Image(systemName: "waveform").foregroundStyle(space.color)
+                Text(String((ir as NSString).lastPathComponent.dropFirst(9))).font(.system(size: 12)).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 4)
+                Button("Change") { store.chooseIR(space: space.id) }.buttonStyle(PillButtonStyle())
+            }
+            Text("The room is the recording you loaded: an impulse response of a real space. Amount, brightness and echo still apply; type and size do not.")
+                .font(.system(size: 11.5)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+        }
         Menu {
             ForEach(ReverbKind.allCases) { k in
                 Button(k.title) { store.mutate { p in if let i = p.spaces.firstIndex(where: { $0.id == space.id }) { p.spaces[i].reverb = k } } }
             }
         } label: { Text(space.reverb.title) }
+        .disabled(space.ir != nil).opacity(space.ir != nil ? 0.4 : 1)
         Field(title: "Amount", value: String(format: "%.0f%%", space.wet * 100)) { slide(\.wet, 0...1, reset: nil) }
         Field(title: "Size", value: space.size.map { String(format: "%.0f%%", $0 * 100) } ?? "From type") {
             Slide(value: space.size ?? 0.5, range: 0...1, tint: space.color, reset: nil, begin: { store.beginGesture() }) { v in

@@ -407,3 +407,27 @@ extension Store {
         return names
     }
 }
+
+extension Store {
+    /// Copies an impulse response into the session and makes it the space's reverb.
+    func importIR(_ source: URL, space id: UUID) {
+        let dest = subfolder("IR").appendingPathComponent(UUID().uuidString.prefix(8) + "-" + source.lastPathComponent)
+        do { try FileManager.default.copyItem(at: source, to: dest) } catch {
+            say("Could not copy \(source.lastPathComponent).", error: true)
+            return
+        }
+        guard IRData(url: dest) != nil else {
+            try? FileManager.default.removeItem(at: dest)
+            say("\(source.lastPathComponent) is not a readable audio file.", error: true)
+            return
+        }
+        mutate { p in if let i = p.spaces.firstIndex(where: { $0.id == id }) { p.spaces[i].ir = "IR/" + dest.lastPathComponent } }
+    }
+
+    func chooseIR(space id: UUID) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.audio]
+        panel.message = "Choose an impulse response: a recording of a real room answering a click or a sweep."
+        if panel.runModal() == .OK, let url = panel.url { importIR(url, space: id) }
+    }
+}

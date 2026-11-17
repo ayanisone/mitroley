@@ -203,8 +203,8 @@ final class BusProcessor {
     }
 
     /// The session's limiter without its compressor, for mixes folded from one that has already been through the bus.
-    static func limiterOnly(_ d: BusDynamics?) -> BusDynamics {
-        var x = d ?? BusDynamics()
+    static func limiterOnly(_ d: BusDynamics) -> BusDynamics {
+        var x = d
         x.compressor = false
         return x
     }
@@ -417,13 +417,13 @@ extension Exporter {
     /// Renders the session once and measures every format it folds to.
     static func measure(_ p: Project, resolve: (Take) -> URL?) throws -> [MixMeasure] {
         var bed = try immersive(p, layout: .bed714, resolve: resolve).channels
-        BusProcessor.run(&bed, p.dynamics ?? BusDynamics())
+        BusProcessor.run(&bed, p.bus)
         let folding = Downmix.trimmed(bed, p)
         var s51 = Downmix.fold51(folding)
         var lr = Downmix.loRo(s51)
         // Folding adds channels together, so the folds get the limiter again, linked across their own channels.
-        BusProcessor.run(&s51, BusProcessor.limiterOnly(p.dynamics))
-        BusProcessor.run(&lr, BusProcessor.limiterOnly(p.dynamics))
+        BusProcessor.run(&s51, BusProcessor.limiterOnly(p.bus))
+        BusProcessor.run(&lr, BusProcessor.limiterOnly(p.bus))
         let sp = Downmix.speakers(folding)
         return [
             MixMeasure(name: "7.1.4", lufs: Downmix.loudness(bed, weights: Downmix.weights714), truePeak: Downmix.truePeak(bed)),

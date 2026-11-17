@@ -50,11 +50,11 @@ Restart Claude, open mitroley with a session, and ask Claude to "look at the mit
 | --- | --- |
 | Session and picture | `get_project`, `new_session`, `import_video`, `analyze_video`, `get_frames`, `focus` |
 | Revised cuts | `import_revised_video`, `get_revision` |
-| Scenes and spaces | `set_scenes`, `define_space`, `list_space_templates` |
+| Scenes and spaces | `set_scenes`, `define_space` (also loads an impulse response for IR reverb), `list_space_templates` |
 | Tracks and clips | `add_track`, `update_track` (also reorders with `index`), `delete_track`, `set_group`, `add_audio_clip`, `update_clip`, `delete_clip`, `crossfade`, `set_automation` |
 | Sound and music | `generate_sfx`, `generate_missing`, `measure_takes`, `place_steps`, `original_sound`, `compose_music` |
 | Voice | `transcribe_voices`, `list_voices`, `speak_line` |
-| Mix | `set_master` (linked compressor and limiter, fold-down trims), `measure_mix` (LUFS and true peak of every format), `set_monitor` (monitoring and session format) |
+| Mix | `set_master` (the master effects rack: compressor, limiter, surround reverb, fold-down trims, loudness meter), `measure_mix` (LUFS and true peak of every format), `set_monitor` (monitoring and session format) |
 | Transport and delivery | `transport`, `set_loop`, `export` |
 
 The exact list and every parameter come from the app itself: a client that lists tools always sees what the

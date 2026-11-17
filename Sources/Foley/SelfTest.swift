@@ -102,6 +102,17 @@ enum SelfTest {
             } } }
             check("7.1.4 panner is constant-power", worst < 0.001, "worst deviation \(worst)")
 
+            // IR reverb inside the engine: a space whose room is an impulse response returns a tail, a different one from the built-in reverb.
+            var irp = p
+            irp.spaces[0].wet = 0.6; irp.spaces[1].wet = 0.6
+            let builtIn = try Exporter.render(irp, mode: .stereo, stem: .reverb, resolve: resolve)
+            irp.spaces[0].ir = noise.path; irp.spaces[1].ir = noise.path
+            let withIR = try Exporter.render(irp, mode: .stereo, stem: .reverb, resolve: resolve)
+            var diff = 0.0
+            for i in 0..<min(builtIn.l.count, withIR.l.count) { diff += Double(abs(builtIn.l[i] - withIR.l[i])) }
+            check("IR reverb runs in the engine", rms(withIR.l, 1, 6) > 0.0005 && diff > 1,
+                  String(format: "reverb return %.5f with the response, %.5f built-in", rms(withIR.l, 1, 6), rms(builtIn.l, 1, 6)))
+
             // 9. Fold-downs of the 7.1.4 mix, on synthetic channels.
             downmixChecks(check)
             busChecks(check)
@@ -190,6 +201,40 @@ enum SelfTest {
         let level = 20 * log10(rms(a, 0.1, 0.9) / rms(noise, 0.1, 0.9))
         check("surround reverb is decorrelated", abs(level) < 0.5 && abs(Downmix.correlation(noise, a)) < 0.35 && abs(Downmix.correlation(a, b)) < 0.35,
               String(format: "level %+.2f dB, correlation with the front %.2f, between pairs %.2f", level, Downmix.correlation(noise, a), Downmix.correlation(a, b)))
+
+        // 7. IR reverb: the block convolver gives the same answer as convolving sample by sample, 512 samples later.
+        var s2: UInt64 = 0x2545F4914F6CDD1D
+        func rnd() -> Float { s2 ^= s2 << 13; s2 ^= s2 >> 7; s2 ^= s2 << 17; return Float(Double(s2 % 20001) / 10000 - 1) }
+        let hl = (0..<1500).map { Float(exp(-Double($0) / 300)) * rnd() }, hr = (0..<1500).map { Float(exp(-Double($0) / 250)) * rnd() }
+        if let ir = IRData(left: hl, right: hr) {
+            let m = 6000
+            let x = (0..<m).map { _ in rnd() * 0.5 }
+            var energy = 0.0
+            for i in 0..<1500 { energy += Double(hl[i] * hl[i]) + Double(hr[i] * hr[i]) }
+            let k = Float(1 / (energy / 2).squareRoot())
+            var want = [Float](repeating: 0, count: m)
+            for i in 0..<m { var acc: Float = 0; for j in 0...min(i, 1499) { acc += x[i - j] * hl[j] }; want[i] = acc * k }
+            let conv = Convolver()
+            conv.set(ir)
+            var l = x + [Float](repeating: 0, count: 512), r = l
+            var at = 0
+            // Odd-sized buffers, the way a real audio device asks for them.
+            while at < l.count {
+                let len = min(300, l.count - at)
+                l.withUnsafeMutableBufferPointer { lp in
+                    r.withUnsafeMutableBufferPointer { rp in
+                        var ptrs = [lp.baseAddress! + at, rp.baseAddress! + at]
+                        ptrs.withUnsafeMutableBufferPointer { conv.process(UnsafePointer($0.baseAddress!), frames: len) }
+                    }
+                }
+                at += len
+            }
+            var worst: Float = 0
+            for i in 0..<m { worst = max(worst, abs(l[i + 512] - want[i])) }
+            check("IR reverb matches a direct convolution", worst < 1e-3, String(format: "largest difference %.6f over %d samples, %d blocks of response", worst, m, ir.parts))
+        } else {
+            check("IR reverb matches a direct convolution", false, "could not prepare the response")
+        }
 
         // 5. Loudness: 997 Hz at -23 dBFS in both channels reads -23 LUFS, and silence afterwards does not pull it down.
         let meter = LoudnessAnalyzer()

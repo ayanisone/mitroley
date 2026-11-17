@@ -83,7 +83,7 @@ final class Player {
         graph.rebuildIfNeeded(p)
         graph.configureSpaces(p)
         graph.loadClips(p, resolve: resolve)
-        graph.bus?.set(p.dynamics ?? BusDynamics())
+        graph.bus?.set(p.bus)
         startEngine()
         video.volume = Float(p.videoVolume)
         video.isMuted = p.videoVolume <= 0.001

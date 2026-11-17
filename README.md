@@ -52,9 +52,12 @@ Two ways in, both using the same commands (`Sources/Foley/Commands.swift`):
 | --- | --- |
 | Session format | 7.1.4, 5.1, binaural or stereo, chosen in the transport bar (new sessions take the default from Settings). It decides which speakers the panner and the Room window show and which export is offered first. Every other format can still be exported from it. On a Mac you always listen in two channels: binaurally for the spatial formats, plainly for stereo. |
 | Panner | A top-down disc for each spatial track. Speakers light up with the signal they get, the lit arc on the rim shows how widely the sound is spread, and the glow grows as it is lifted. Shift-drag for fine moves, double-click to centre. |
-| Master bus | Click the output meter. A compressor and a limiter linked across every channel (one gain from the loudest channel, applied to all, so the image never moves and no channel clips), on the live output and in every export except stems. Limiter on at −1 dBTP by default. |
-| Loudness | BS.1770-4 momentary, short-term and integrated loudness and true peak of what is playing, and "Measure full mix" for the 7.1.4, 5.1, stereo fold-down and laptop-and-phone versions. |
+| Master effects | Click the output meter for the rack. It starts empty, so the mix goes out untouched; add an effect when you need it, bypass it with its switch, remove it with ×. |
+| Compressor, Limiter | Linked across every channel (one gain from the loudest channel, applied to all, so the image never moves and no channel clips), on the live output and in every export except stems. The limiter also holds the 5.1 and stereo fold-downs under its ceiling. |
+| Surround reverb | In surround exports, gives the side, rear and height speakers their own decorrelated copy of each space's reverb. |
 | Fold-down trims | Level of the surrounds and heights when the 7.1.4 is folded to fewer speakers. |
+| Loudness meter | BS.1770-4 momentary, short-term and integrated loudness and true peak of what is playing, and "Measure full mix" for the 7.1.4, 5.1, stereo fold-down and laptop-and-phone versions. |
+| IR reverb | In a space's panel, switch Room to "IR reverb" and load an impulse response (a recording of a real room). It replaces the built-in reverb for that space, live and in exports. Up to six seconds. |
 | Track order | Drag a track's name up or down, or ⌥⌘↑ / ⌥⌘↓. |
 
 ## Export

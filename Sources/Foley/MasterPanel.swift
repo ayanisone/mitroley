@@ -20,7 +20,7 @@ struct MasterMeter: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(PressStyle(scale: 0.97))
-        .help("Output level and integrated loudness. Click for the master compressor, limiter and loudness meter.")
+        .help("Output level and integrated loudness. Click for the master effects rack.")
         .popover(isPresented: $open, arrowEdge: .top) {
             MasterPanel().environment(store)
         }
@@ -62,125 +62,120 @@ struct MasterPanel: View {
     @State private var problem: String?
     private let good = Color(red: 0.3, green: 0.85, blue: 0.5)
 
-    private var d: BusDynamics { store.project.dynamics ?? BusDynamics() }
-
-    private func slide(_ kp: WritableKeyPath<BusDynamics, Double>, _ range: ClosedRange<Double>, log: Bool = false, reset: Double) -> Slide {
-        Slide(value: d[keyPath: kp], range: range, log: log, reset: reset, begin: { store.beginGesture() }) { v in
-            store.live { p in
-                var x = p.dynamics ?? BusDynamics()
-                x[keyPath: kp] = v
-                p.dynamics = x
-            }
-        }
-    }
-
-    private func trim(_ kp: WritableKeyPath<Project, Double?>) -> Slide {
-        Slide(value: store.project[keyPath: kp] ?? 0, range: -12...6, reset: 0, begin: { store.beginGesture() }) { v in
-            store.live { $0[keyPath: kp] = abs(v) < 0.05 ? nil : v }
-        }
-    }
-
-    private func toggle(_ kp: WritableKeyPath<BusDynamics, Bool>) -> Binding<Bool> {
-        Binding(get: { d[keyPath: kp] }, set: { v in
-            store.mutate { p in
-                var x = p.dynamics ?? BusDynamics()
-                x[keyPath: kp] = v
-                p.dynamics = x
-            }
-        })
-    }
-
     var body: some View {
-        let d = self.d
+        let effects = store.project.effects
+        let missing = EffectKind.allCases.filter { k in !effects.contains { $0.kind == k } }
         ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Master bus").font(.system(size: 17, weight: .semibold)).tracking(-0.2)
-                Text("Both work on every channel at once. They listen to the loudest channel and turn all of them down together, so a hit in one speaker never moves the image, and no channel can clip.")
-                    .font(.system(size: 11.5)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
-
-                header("Compressor", toggle(\.compressor))
-                Group {
-                    Field(title: "Threshold", value: String(format: "%.1f dB", d.threshold)) { slide(\.threshold, -48...0, reset: -18) }
-                    Field(title: "Ratio", value: String(format: "%.1f : 1", d.ratio)) { slide(\.ratio, 1...12, reset: 3) }
-                    Field(title: "Attack", value: String(format: "%.0f ms", d.attack)) { slide(\.attack, 0.5...120, log: true, reset: 10) }
-                    Field(title: "Release", value: String(format: "%.0f ms", d.release)) { slide(\.release, 20...1200, log: true, reset: 150) }
-                    Field(title: "Make-up", value: String(format: "%+.1f dB", d.makeup)) { slide(\.makeup, 0...18, reset: 0) }
-                    Reduction(which: \.compressor)
-                }
-                .opacity(d.compressor ? 1 : 0.4)
-                .disabled(!d.compressor)
-
-                header("Limiter", toggle(\.limiter))
-                Group {
-                    Field(title: "Ceiling", value: String(format: "%.1f dBTP", d.ceiling)) { slide(\.ceiling, -6...0, reset: -1) }
-                    Field(title: "Release", value: String(format: "%.0f ms", d.limiterRelease)) { slide(\.limiterRelease, 20...800, log: true, reset: 120) }
-                    Reduction(which: \.limiter)
-                }
-                .opacity(d.limiter ? 1 : 0.4)
-                .disabled(!d.limiter)
-
-                SectionTitle("Fold-down trims")
-                Field(title: "Surrounds", value: String(format: "%+.1f dB", store.project.surroundTrim ?? 0)) { trim(\.surroundTrim) }
-                Field(title: "Heights", value: String(format: "%+.1f dB", store.project.heightTrim ?? 0)) { trim(\.heightTrim) }
-                Text("How loud the surround and height speakers are when the 7.1.4 mix is folded to 5.1, stereo or laptop and phone. The 7.1.4 itself is not changed.")
-                    .font(.system(size: 11)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
-
+            VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    SectionTitle("Loudness")
+                    Text("Master effects").font(.system(size: 17, weight: .semibold)).tracking(-0.2)
                     Spacer()
-                    Button("Reset") { store.player.loudness.reset() }.buttonStyle(PillButtonStyle())
-                }
-                LoudnessReadout(ceiling: d.ceiling)
-                Text("Target −14 LUFS integrated, peaks under −1 dBTP. This reads what you are hearing now; the full mix in every format is measured below.")
-                    .font(.system(size: 11)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
-
-                HStack {
-                    Button(measuring ? "Measuring" : "Measure full mix") { measure() }
-                        .buttonStyle(PillButtonStyle()).disabled(measuring)
-                    if measuring { ProgressView().controlSize(.small) }
-                }
-                if let problem {
-                    Text(problem).font(.system(size: 11.5)).foregroundStyle(Theme.danger).fixedSize(horizontal: false, vertical: true)
-                }
-                if !rows.isEmpty {
-                    VStack(spacing: 5) {
-                        ForEach(rows) { r in
-                            HStack {
-                                Text(r.name).font(.system(size: 12))
-                                Spacer()
-                                Text(r.lufs.map { String(format: "%.1f LUFS", $0) } ?? "silent")
-                                    .foregroundStyle(tint(lufs: r.lufs))
-                                    .frame(width: 84, alignment: .trailing)
-                                Text(String(format: "%.1f dBTP", r.truePeak))
-                                    .foregroundStyle(r.truePeak > d.ceiling + 0.05 ? Theme.danger : Theme.secondary)
-                                    .frame(width: 78, alignment: .trailing)
-                            }
-                            .font(.system(size: 11.5).monospacedDigit())
+                    Menu {
+                        ForEach(missing) { k in
+                            Button(k.title) { store.mutate { $0.withEffect(k) { $0.on = true } } }
                         }
+                    } label: {
+                        Label("Add", systemImage: "plus").font(.system(size: 12, weight: .semibold))
                     }
-                    .padding(10)
-                    .background(Theme.raised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .menuStyle(.button).buttonStyle(PillButtonStyle()).menuIndicator(.hidden).fixedSize()
+                    .disabled(missing.isEmpty)
                 }
+                if effects.isEmpty {
+                    Text("Nothing here, so the mix goes out untouched. Add an effect when you need one: a compressor, a limiter, surround reverb, fold-down trims or a loudness meter.")
+                        .font(.system(size: 12)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Theme.raised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                ForEach(effects) { e in card(e) }
             }
             .padding(18)
         }
-        .frame(width: 320, height: 620)
+        .frame(width: 330, height: effects.isEmpty ? 190 : 640)
         .background(Theme.panel)
         .environment(\.colorScheme, .dark)
     }
 
-    private func header(_ title: String, _ on: Binding<Bool>) -> some View {
+    private func card(_ e: Effect) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 8) {
+                Text(e.kind.title).font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Toggle("", isOn: Binding(get: { e.on }, set: { v in store.mutate { $0.withEffect(e.kind) { $0.on = v } } }))
+                    .toggleStyle(.switch).controlSize(.mini).labelsHidden()
+                    .help(e.on ? "Bypass" : "Switch on")
+                Button { store.mutate { $0.removeEffect(e.kind) } } label: {
+                    Image(systemName: "xmark").font(.system(size: 9.5, weight: .bold)).foregroundStyle(Theme.secondary)
+                        .frame(width: 20, height: 20).background(Color.white.opacity(0.07), in: Circle()).contentShape(Circle())
+                }
+                .buttonStyle(PressStyle(scale: 0.9))
+                .help("Remove from the rack")
+            }
+            Text(e.kind.detail).font(.system(size: 11)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
+            Group {
+                ForEach(e.kind.params) { spec in
+                    Field(title: spec.title, value: String(format: spec.format, e.value(spec.key) * spec.scale)) {
+                        Slide(value: e.value(spec.key), range: spec.range, log: spec.log, reset: spec.fallback, begin: { store.beginGesture() }) { v in
+                            store.live { $0.withEffect(e.kind) { $0.values[spec.key] = v } }
+                        }
+                    }
+                }
+                switch e.kind {
+                case .compressor: Reduction(which: \.compressor)
+                case .limiter: Reduction(which: \.limiter)
+                case .loudness: loudness(e)
+                default: EmptyView()
+                }
+            }
+            .opacity(e.on ? 1 : 0.4)
+            .disabled(!e.on)
+        }
+        .padding(12)
+        .background(Theme.raised, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    @ViewBuilder private func loudness(_ e: Effect) -> some View {
+        let target = e.value("target")
+        let ceiling = store.project.active(.limiter)?.value("ceiling") ?? -1
+        LoudnessReadout(target: target, ceiling: ceiling)
         HStack {
-            SectionTitle(title)
-            Spacer()
-            Toggle("", isOn: on).toggleStyle(.switch).controlSize(.small).labelsHidden()
+            Button("Reset") { store.player.loudness.reset() }.buttonStyle(PillButtonStyle())
+            Button(measuring ? "Measuring" : "Measure full mix") { measure() }
+                .buttonStyle(PillButtonStyle()).disabled(measuring)
+            if measuring { ProgressView().controlSize(.small) }
+        }
+        if measuring {
+            Text("Rendering the whole session. This takes about as long as an export.")
+                .font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+        }
+        if let problem {
+            Text(problem).font(.system(size: 11.5)).foregroundStyle(Theme.danger).fixedSize(horizontal: false, vertical: true)
+        }
+        if !rows.isEmpty {
+            VStack(spacing: 5) {
+                ForEach(rows) { r in
+                    HStack {
+                        Text(r.name).font(.system(size: 12))
+                        Spacer()
+                        Text(r.lufs.map { String(format: "%.1f LUFS", $0) } ?? "silent")
+                            .foregroundStyle(tint(r.lufs, target))
+                            .frame(width: 84, alignment: .trailing)
+                        Text(String(format: "%.1f dBTP", r.truePeak))
+                            .foregroundStyle(r.truePeak > ceiling + 0.05 ? Theme.danger : Theme.secondary)
+                            .frame(width: 78, alignment: .trailing)
+                    }
+                    .font(.system(size: 11.5).monospacedDigit())
+                }
+            }
+            .padding(10)
+            .background(Color.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
     }
 
-    private func tint(lufs: Double?) -> Color {
+    private func tint(_ lufs: Double?, _ target: Double) -> Color {
         guard let v = lufs else { return Theme.tertiary }
-        if v > -13 { return Theme.danger }
-        return v >= -16 ? good : Theme.accent
+        if v > target + 1 { return Theme.danger }
+        return v >= target - 2 ? good : Theme.accent
     }
 
     private func measure() {
@@ -216,6 +211,7 @@ private struct Reduction: View {
 
 private struct LoudnessReadout: View {
     @Environment(Store.self) private var store
+    var target = -14.0
     let ceiling: Double
     private let good = Color(red: 0.3, green: 0.85, blue: 0.5)
 
@@ -234,13 +230,13 @@ private struct LoudnessReadout: View {
             small("True peak", m.truePeak, "%.1f", (m.truePeak ?? -99) > ceiling + 0.05 ? Theme.danger : Color.white)
         }
         .padding(12)
-        .background(Theme.raised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(Color.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private func tint(_ v: Double?) -> Color {
         guard let v else { return Theme.tertiary }
-        if v > -13 { return Theme.danger }
-        return v >= -16 ? good : Color.white
+        if v > target + 1 { return Theme.danger }
+        return v >= target - 2 ? good : Color.white
     }
 
     private func small(_ title: String, _ v: Double?, _ f: String, _ color: Color) -> some View {

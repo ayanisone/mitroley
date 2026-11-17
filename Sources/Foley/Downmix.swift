@@ -15,7 +15,8 @@ enum Downmix {
     /// 7.1.4 → 5.1 in the ITU side-surround layout: L R C LFE Ls Rs.
     /// The 7.1.4 mix with the session's fold-down trims on its surrounds and heights. Used for every fold; the 7.1.4 itself is never trimmed.
     static func trimmed(_ c: [[Float]], _ p: Project) -> [[Float]] {
-        let s = Float(dbToLinear(p.surroundTrim ?? 0)), h = Float(dbToLinear(p.heightTrim ?? 0))
+        let t = p.foldTrims
+        let s = Float(dbToLinear(t.surround)), h = Float(dbToLinear(t.height))
         guard c.count == 12, s != 1 || h != 1 else { return c }
         var o = c
         for i in 4..<8 where s != 1 { scale(&o[i], s) }
@@ -497,19 +498,19 @@ extension Exporter {
     static func exportFolds(_ p: Project, format: ExportFormat, to url: URL, resolve: (Take) -> URL?) throws -> String {
         var bed = try immersive(p, layout: .bed714, resolve: resolve).channels
         // The master bus works on all twelve channels at once, before anything is folded.
-        BusProcessor.run(&bed, p.dynamics ?? BusDynamics())
+        BusProcessor.run(&bed, p.bus)
         let folding = Downmix.trimmed(bed, p)
         switch format {
         case .surround51:
             var ch = Downmix.fold51(folding)
-            BusProcessor.run(&ch, BusProcessor.limiterOnly(p.dynamics))
+            BusProcessor.run(&ch, BusProcessor.limiterOnly(p.bus))
             let trim = protect(&ch)
             try WAV.write(url, channels: ch, channelMask: 0x60F)
             return "6 channels (L R C LFE Ls Rs) folded from the 7.1.4 mix. "
                 + Downmix.levels(ch, weights: Downmix.weights51) + lowered(trim)
         case .stereoFold:
             var ch = Downmix.loRo(Downmix.fold51(folding))
-            BusProcessor.run(&ch, BusProcessor.limiterOnly(p.dynamics))
+            BusProcessor.run(&ch, BusProcessor.limiterOnly(p.bus))
             let trim = protect(&ch)
             try WAV.write(url, channels: ch)
             return "Lo/Ro of the 5.1 fold, LFE left out. " + Downmix.levels(ch)
@@ -530,8 +531,8 @@ extension Exporter {
             Downmix.add(sp.right, to: &mono, gain: 1)
             Downmix.scale(&mono, 0.5)
             // Folding adds channels together: the folds get the limiter again, linked across their own channels.
-            BusProcessor.run(&s51, BusProcessor.limiterOnly(p.dynamics))
-            BusProcessor.run(&lr, BusProcessor.limiterOnly(p.dynamics))
+            BusProcessor.run(&s51, BusProcessor.limiterOnly(p.bus))
+            BusProcessor.run(&lr, BusProcessor.limiterOnly(p.bus))
             let trims = [protect(&bed), protect(&s51), protect(&lr)]
 
             var rows: [String] = []

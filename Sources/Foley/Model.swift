@@ -139,6 +139,7 @@ struct Space: Codable, Equatable, Identifiable {
     var dryTrim: Double = 0         // dB applied to the dry sound while in this space
     var ambiencePrompt: String = "" // what this place sounds like when nothing happens
     var size: Double?               // 0…1 small → large room, overriding the reverb type's own size
+    var ir: String?                 // impulse response file used instead of the built-in reverb (path inside the session)
 }
 
 struct SpaceTemplate: Identifiable {
@@ -478,7 +479,8 @@ struct Project: Codable, Equatable {
     var masterVolume: Double?       // dB on everything
     var surroundTrim: Double?       // dB on the surrounds when the mix is folded to fewer speakers
     var heightTrim: Double?         // dB on the height speakers when folded
-    var dynamics: BusDynamics?      // master compressor and limiter; nil = limiter only
+    var dynamics: BusDynamics?      // before the rack: master compressor and limiter. Read once, then cleared
+    var rack: [Effect]?             // master effects; nil = a session from before the rack
     var mixFormat: MixFormat?       // what the session is mixed for; nil = 7.1.4
     var format: MixFormat { mixFormat ?? .atmos714 }
     var music: MusicOptions?

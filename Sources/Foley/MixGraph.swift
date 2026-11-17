@@ -167,6 +167,10 @@ final class MixGraph {
         let eq = AVAudioUnitEQ(numberOfBands: 1)
         var kind: ReverbKind?
         var size: Double?
+        /// Set when the space uses an impulse response instead of the built-in reverb.
+        var convolver: AVAudioUnitEffect?
+        var engine: Convolver?
+        var irKey: String?
         init(id: UUID) { self.id = id }
     }
 
@@ -221,7 +225,7 @@ final class MixGraph {
     }
 
     static func signature(_ p: Project) -> String {
-        p.tracks.map(\.id.uuidString).joined(separator: ",") + "|" + p.spaces.map(\.id.uuidString).joined(separator: ",")
+        p.tracks.map(\.id.uuidString).joined(separator: ",") + "|" + p.spaces.map { $0.id.uuidString + ($0.ir.map { "/" + $0 } ?? "") }.joined(separator: ",")
     }
 
     /// Rebuilds nodes when tracks or spaces were added or removed. Returns true if it rebuilt.
@@ -235,7 +239,10 @@ final class MixGraph {
             for n in [t.source, t.eq, t.dryStereo, t.dryMono] as [AVAudioNode] { engine.detach(n) }
             for s in t.sends.values { engine.detach(s) }
         }
-        for s in spaces { for n in [s.input, s.delay, s.reverb, s.eq] as [AVAudioNode] { engine.detach(n) } }
+        for s in spaces {
+            for n in [s.input, s.delay, s.reverb, s.eq] as [AVAudioNode] { engine.detach(n) }
+            if let c = s.convolver { engine.detach(c) }
+        }
         tracks = []
         spaces = []
 
@@ -243,8 +250,18 @@ final class MixGraph {
             let n = SpaceNodes(id: sp.id)
             for node in [n.input, n.delay, n.reverb, n.eq] as [AVAudioNode] { engine.attach(node) }
             engine.connect(n.input, to: n.delay, format: stereo)
-            engine.connect(n.delay, to: n.reverb, format: stereo)
-            engine.connect(n.reverb, to: n.eq, format: stereo)
+            if sp.ir != nil, ConvolverAU.registered, case let unit = AVAudioUnitEffect(audioComponentDescription: ConvolverAU.desc),
+               let au = unit.auAudioUnit as? ConvolverAU {
+                // This space's reverb is an impulse response: the convolver takes the built-in reverb's place.
+                engine.attach(unit)
+                engine.connect(n.delay, to: unit, format: stereo)
+                engine.connect(unit, to: n.eq, format: stereo)
+                n.convolver = unit
+                n.engine = au.dsp
+            } else {
+                engine.connect(n.delay, to: n.reverb, format: stereo)
+                engine.connect(n.reverb, to: n.eq, format: stereo)
+            }
             engine.connect(n.eq, to: engine.mainMixerNode, format: stereo)
             n.reverb.wetDryMix = 100
             n.eq.bands[0].filterType = .lowPass
@@ -301,6 +318,11 @@ final class MixGraph {
     /// Hands every track its clips. `resolve` maps a take to a file on disk.
     func loadClips(_ p: Project, resolve: (Take) -> URL?) {
         let sr = AudioCache.sampleRate
+        for n in spaces {
+            guard let conv = n.engine, let file = p.space(n.id)?.ir, n.irKey != file else { continue }
+            conv.set(resolve(Take(file: file, duration: 0)).flatMap { IRData(url: $0) })
+            n.irKey = file
+        }
         for (i, tr) in p.tracks.enumerated() where i < tracks.count {
             var prepared: [PreparedClip] = []
             var keep: [AVAudioPCMBuffer] = []

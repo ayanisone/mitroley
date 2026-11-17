@@ -78,7 +78,8 @@ final class Commands {
               "echo_feedback": p("number", "0…0.9. How many times the echo repeats."),
               "muffle_hz": p("number", "Low-pass applied to the direct sound while in this space, 200…20000. 20000 = none. Use for sound heard through a wall, from inside a car, or underwater."),
               "dry_trim_db": p("number", "dB applied to the direct sound while in this space, e.g. -6 when the source is in the next room."),
-              "ambience_prompt": p("string", "A sound-effect prompt for this place's background sound.")], required: ["name"]),
+              "ambience_prompt": p("string", "A sound-effect prompt for this place's background sound."),
+              "impulse_response": p("string", "Path to an audio file with an impulse response of a real room. The space then uses it (IR reverb) instead of the built-in reverb; reverb and size no longer apply. Pass an empty string to go back to the built-in reverb.")], required: ["name"]),
         tool("set_scenes", "Replaces the scene lane. Scenes are the time regions that tell every scene-following track which space it is in. Cover the whole timeline without gaps. Split wherever the acoustic space changes, which is not always at a cut: a character walking from one room to another inside one shot needs two scenes with a long transition.",
              ["scenes": ["type": "array", "items": [
                 "type": "object",
@@ -225,14 +226,18 @@ final class Commands {
         tool("set_monitor", "Switches live monitoring between plain stereo and the spatial (binaural / Atmos-style) render, and/or sets what the session is mixed for. The format decides which speakers the Room window shows and which export is offered first; every format can still be exported.",
              ["mode": p("string", "stereo or spatial.", extra: ["enum": ["stereo", "spatial"]]),
               "format": p("string", "Session mix format.", extra: ["enum": MixFormat.allCases.map(\.rawValue)])]),
-        tool("set_master", "Sets the master bus: a compressor, then a limiter, both linked across every channel (one gain from the loudest channel, applied to all, so the image never shifts and no channel clips). Runs live and in every export except stems. Only the fields you pass change. By default the limiter is on at -1 dBTP and the compressor is off.",
-             ["compressor": p("boolean", "Compressor on or off."),
+        tool("set_master", "Edits the master effects rack. Nothing is applied to the mix unless an effect is in the rack and on; a new session has an empty rack. Passing any setting of an effect adds that effect. compressor and limiter are linked across every channel (one gain from the loudest channel, applied to all, so the image never shifts and no channel clips) and run live and in every export except stems. surround_reverb gives side, rear and height speakers their own decorrelated copy of each space's reverb in surround exports. trims set surround and height levels in fold-downs. loudness is a meter only. Only the fields you pass change.",
+             ["compressor": p("boolean", "Add and switch on, or switch off."),
               "threshold_db": p("number", "-48…0."), "ratio": p("number", "1…12."),
               "attack_ms": p("number", "0.5…120."), "release_ms": p("number", "20…1200."), "makeup_db": p("number", "0…18."),
-              "limiter": p("boolean", "Limiter on or off."),
+              "limiter": p("boolean", "Add and switch on, or switch off."),
               "ceiling_dbtp": p("number", "-6…0. True-peak ceiling."), "limiter_release_ms": p("number", "20…800."),
-              "surround_trim_db": p("number", "-12…6. Level of the surround speakers when the 7.1.4 mix is folded to 5.1, stereo or laptop-and-phone. 0 by default."),
-              "height_trim_db": p("number", "-12…6. Level of the height speakers in those folds.")]),
+              "surround_reverb": p("boolean", "Add and switch on, or switch off."),
+              "surround_spread": p("number", "0…1. How different the surround copies of the reverb are from the front's."),
+              "surround_trim_db": p("number", "-12…6. Level of the surround speakers when the 7.1.4 mix is folded to fewer speakers."),
+              "height_trim_db": p("number", "-12…6. Level of the height speakers in those folds."),
+              "loudness_meter": p("boolean", "Show or hide the loudness meter in the rack."),
+              "remove": p("array", "Effects to take out of the rack.", extra: ["items": ["type": "string", "enum": EffectKind.allCases.map(\.rawValue)]])]),
         tool("measure_mix", "Renders the whole session once and returns integrated loudness (LUFS, BS.1770-4) and true peak (dBTP) of the 7.1.4, the 5.1, the stereo fold-down and the laptop-and-phone stereo. Use it to check a mix against a delivery spec such as -14 LUFS, -1 dBTP. It renders the whole session, so it can take a minute or two."),
         tool("export", "Renders the session to a file and returns its path. movie = the video with the stereo mix. stereo and binaural = WAV. stems = a folder with one WAV per track; groupStems = one WAV per group. bed714 = 12-channel 7.1.4 WAV. surround51 = 6-channel 5.1 WAV folded from the 7.1.4. stereoFold = the standard Lo/Ro stereo fold-down of that 5.1 (what a TV does with a surround mix). speakers = stereo for laptop and phone speakers, folded from the 7.1.4 with widened surrounds, a height cue and bass harmonics, -14 LUFS, -1 dBTP, checked in mono. mixdowns = a folder with the 7.1.4, 5.1, stereo fold-down, laptop-and-phone stereo, its mono sum and a text file with the loudness of each. adm = ADM BWF with a 7.1.2 bed and one object per spatial track, for Atmos workflows.",
              ["format": p("string", "Output format.", extra: ["enum": ExportFormat.allCases.map(\.rawValue)]),
@@ -543,21 +548,21 @@ final class Commands {
             return CommandResult(json: ["ok": true, "format": store.project.format.rawValue, "monitor": store.player.monitor.rawValue])
         case "set_master":
             store.mutate { p in
-                var d = p.dynamics ?? BusDynamics()
-                if let v = a.flag("compressor") { d.compressor = v }
-                if let v = a.num("threshold_db") { d.threshold = min(0, max(-48, v)) }
-                if let v = a.num("ratio") { d.ratio = min(12, max(1, v)) }
-                if let v = a.num("attack_ms") { d.attack = min(120, max(0.5, v)) }
-                if let v = a.num("release_ms") { d.release = min(1200, max(20, v)) }
-                if let v = a.num("makeup_db") { d.makeup = min(18, max(0, v)) }
-                if let v = a.flag("limiter") { d.limiter = v }
-                if let v = a.num("ceiling_dbtp") { d.ceiling = min(0, max(-6, v)) }
-                if let v = a.num("limiter_release_ms") { d.limiterRelease = min(800, max(20, v)) }
-                p.dynamics = d
-                if let v = a.num("surround_trim_db") { p.surroundTrim = min(6, max(-12, v)) }
-                if let v = a.num("height_trim_db") { p.heightTrim = min(6, max(-12, v)) }
+                func set(_ kind: EffectKind, _ key: String, _ arg: String) {
+                    guard let v = a.num(arg), let spec = kind.params.first(where: { $0.key == key }) else { return }
+                    p.withEffect(kind) { $0.values[key] = min(spec.range.upperBound, max(spec.range.lowerBound, v)) }
+                }
+                for (kind, arg) in [(EffectKind.compressor, "compressor"), (.limiter, "limiter"), (.surroundReverb, "surround_reverb"), (.loudness, "loudness_meter")] {
+                    if let v = a.flag(arg) { p.withEffect(kind) { $0.on = v } }
+                }
+                set(.compressor, "threshold", "threshold_db"); set(.compressor, "ratio", "ratio"); set(.compressor, "attack", "attack_ms")
+                set(.compressor, "release", "release_ms"); set(.compressor, "makeup", "makeup_db")
+                set(.limiter, "ceiling", "ceiling_dbtp"); set(.limiter, "release", "limiter_release_ms")
+                set(.surroundReverb, "spread", "surround_spread")
+                set(.trims, "surround", "surround_trim_db"); set(.trims, "height", "height_trim_db")
+                for name in (a["remove"] as? [String]) ?? [] { if let k = EffectKind(rawValue: name) { p.removeEffect(k) } }
             }
-            return CommandResult(json: ["ok": true, "master": masterJSON(store.project.dynamics ?? BusDynamics())])
+            return CommandResult(json: ["ok": true, "master": masterJSON(store.project)])
         case "measure_mix":
             let rows = try await store.measureMix()
             return CommandResult(json: ["formats": rows.map { ["format": $0.name, "lufs": $0.lufs.map { r($0) } ?? NSNull(), "true_peak_dbtp": r($0.truePeak)] as [String: Any] },
@@ -616,7 +621,13 @@ final class Commands {
         if let v = a.num("muffle_hz") { s.muffle = min(20000, max(200, v)) }
         if let v = a.num("dry_trim_db") { s.dryTrim = min(6, max(-40, v)) }
         if let v = a.str("ambience_prompt") { s.ambiencePrompt = v }
+        if a.str("impulse_response") == "" { s.ir = nil }
         let final = s
+        defer {
+            if let path = a.str("impulse_response"), !path.isEmpty {
+                store.importIR(URL(fileURLWithPath: (path as NSString).expandingTildeInPath), space: final.id)
+            }
+        }
         store.mutate { p in
             if let i = p.spaces.firstIndex(where: { $0.id == final.id }) { p.spaces[i] = final } else { p.spaces.append(final) }
         }
@@ -641,9 +652,12 @@ final class Commands {
         return CommandResult(json: ["ok": true, "scenes": out.count])
     }
 
-    private func masterJSON(_ d: BusDynamics) -> [String: Any] {
-        ["compressor": d.compressor, "threshold_db": d.threshold, "ratio": d.ratio, "attack_ms": d.attack, "release_ms": d.release,
-         "makeup_db": d.makeup, "limiter": d.limiter, "ceiling_dbtp": d.ceiling, "limiter_release_ms": d.limiterRelease]
+    private func masterJSON(_ p: Project) -> [[String: Any]] {
+        p.effects.map { e in
+            var values: [String: Any] = [:]
+            for spec in e.kind.params { values[spec.key] = r(e.value(spec.key)) }
+            return ["effect": e.kind.rawValue, "on": e.on, "values": values]
+        }
     }
 
     private func updateTrack(_ a: [String: Any]) throws -> CommandResult {
@@ -827,7 +841,7 @@ final class Commands {
                 return o
             },
             "tracks": p.tracks.map(trackJSON),
-            "monitor": store.player.monitor.rawValue, "mix_format": p.format.rawValue, "master": masterJSON(p.dynamics ?? BusDynamics()), "loop": p.loopRange.map { ["start": r($0.lowerBound), "end": r($0.upperBound)] as [String: Any] } ?? [:], "playhead": r(store.player.time),
+            "monitor": store.player.monitor.rawValue, "mix_format": p.format.rawValue, "master": masterJSON(p), "loop": p.loopRange.map { ["start": r($0.lowerBound), "end": r($0.upperBound)] as [String: Any] } ?? [:], "playhead": r(store.player.time),
             "elevenlabs_key_set": Secrets.has(.elevenLabs), "cues_without_sound": store.missingCues.count,
         ]
         if p.groups != nil { d["groups"] = groupsJSON() }

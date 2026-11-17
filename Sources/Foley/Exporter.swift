@@ -100,7 +100,7 @@ enum Exporter {
         case .stereo, .binaural:
             let mix = try render(p, mode: format == .binaural ? .spatial : .stereo, resolve: resolve)
             var ch = [mix.l, mix.r]
-            let bus = BusProcessor.run(&ch, p.dynamics ?? BusDynamics())
+            let bus = BusProcessor.run(&ch, p.bus)
             let trim = protect(&ch)
             try WAV.write(url, channels: ch)
             return summary(ch, trim: trim) + busNote(bus)
@@ -145,7 +145,7 @@ enum Exporter {
             guard let videoURL else { throw ExportError(message: "There is no video in this project to attach the mix to.") }
             let mix = try render(p, mode: .stereo, tail: 0, resolve: resolve)
             var ch = [mix.l, mix.r]
-            BusProcessor.run(&ch, p.dynamics ?? BusDynamics())
+            BusProcessor.run(&ch, p.bus)
             let trim = protect(&ch)
             let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
             try WAV.write(tmp, channels: ch)
@@ -154,7 +154,7 @@ enum Exporter {
             return summary(ch, trim: trim)
         case .bed714:
             var ch = try immersive(p, layout: .bed714, resolve: resolve).channels
-            let bus = BusProcessor.run(&ch, p.dynamics ?? BusDynamics())
+            let bus = BusProcessor.run(&ch, p.bus)
             let trim = protect(&ch)
             try WAV.write(url, channels: ch, channelMask: 0x2D63F)
             return "12 channels (L R C LFE Lrs Rrs Lss Rss Ltf Rtf Ltr Rtr). " + summary(ch, trim: trim) + busNote(bus)
@@ -163,7 +163,7 @@ enum Exporter {
         case .adm:
             let out = try immersive(p, layout: .adm, resolve: resolve)
             var ch = out.channels
-            BusProcessor.run(&ch, p.dynamics ?? BusDynamics())
+            BusProcessor.run(&ch, p.bus)
             let trim = protect(&ch)
             let frames = ch.first?.count ?? 0
             let adm = ADM.build(project: p, objects: out.objects, frames: frames)
@@ -198,12 +198,19 @@ enum Exporter {
         add(bed.l, to: 0, gain: 1); add(bed.r, to: 1, gain: 1)
         // Reverb wraps around the listener so rooms feel like rooms.
         add(verb.l, to: 0, gain: 0.8); add(verb.r, to: 1, gain: 0.8)
-        // Each speaker pair away from the front gets its own decorrelated copy, so the room surrounds the
-        // listener instead of being one reverb played from five places, and the copies do not pile up when folded.
-        add(decorrelate(verb.l, seed: 11), to: side.0, gain: 0.45); add(decorrelate(verb.r, seed: 12), to: side.1, gain: 0.45)
-        add(decorrelate(verb.l, seed: 21), to: rear.0, gain: 0.3); add(decorrelate(verb.r, seed: 22), to: rear.1, gain: 0.3)
-        add(decorrelate(verb.l, seed: 31), to: 8, gain: 0.3); add(decorrelate(verb.r, seed: 32), to: 9, gain: 0.3)
-        if layout == .bed714 { add(decorrelate(verb.l, seed: 41), to: 10, gain: 0.2); add(decorrelate(verb.r, seed: 42), to: 11, gain: 0.2) }
+        // With the Surround reverb effect, each speaker pair away from the front gets its own decorrelated copy, so the
+        // room surrounds the listener instead of being one reverb played from five places. Without it they share the front's.
+        let spread = Float(min(1, max(0, p.surroundSpread)))
+        func wide(_ x: [Float], _ seed: UInt64) -> [Float] {
+            guard spread > 0 else { return x }
+            var d = decorrelate(x, seed: seed)
+            if spread < 1 { for i in d.indices { d[i] = d[i] * spread + x[i] * (1 - spread) } }
+            return d
+        }
+        add(wide(verb.l, 11), to: side.0, gain: 0.45); add(wide(verb.r, 12), to: side.1, gain: 0.45)
+        add(wide(verb.l, 21), to: rear.0, gain: 0.3); add(wide(verb.r, 22), to: rear.1, gain: 0.3)
+        add(wide(verb.l, 31), to: 8, gain: 0.3); add(wide(verb.r, 32), to: 9, gain: 0.3)
+        if layout == .bed714 { add(wide(verb.l, 41), to: 10, gain: 0.2); add(wide(verb.r, 42), to: 11, gain: 0.2) }
 
         // The sub: the low end of every track that sends to it, below 120 Hz.
         if p.tracks.contains(where: { $0.lfeSend > 0 && !$0.clips.isEmpty }) {
