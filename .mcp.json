@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "mitroley": {
+      "command": "build/mitroley.app/Contents/MacOS/foley-mcp"
+    }
+  }
+}
