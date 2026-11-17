@@ -1,5 +1,7 @@
 # mitroley
 
+![mitroley: video on top, timeline with scenes, tracks and automation below, track inspector and surround panner on the right](docs/screenshot.png)
+
 A small Mac app for fitting sound effects and ambience to picture. Drop in a video, generate
 sounds with ElevenLabs, and let the sound follow what the picture does: a track that follows the
 scene picks up a cave's reverb the moment the scene becomes a cave.
