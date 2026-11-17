@@ -1,3 +1,4 @@
+import AppKit
 import QuartzCore
 import Foundation
 
@@ -498,6 +499,37 @@ final class Commands {
             default: throw CommandError("action must be play, pause or seek.")
             }
             return CommandResult(json: ["ok": true, "time": r(store.player.time), "playing": store.player.isPlaying])
+        case "debug_layout":
+            guard let sv = Self.timelineScrollView(), let doc = sv.documentView else { return CommandResult(json: ["found": false]) }
+            return CommandResult(json: ["flipped": doc.isFlipped, "clip_flipped": sv.contentView.isFlipped,
+                                        "origin": [sv.contentView.bounds.origin.x, sv.contentView.bounds.origin.y],
+                                        "viewport": [sv.contentView.bounds.width, sv.contentView.bounds.height],
+                                        "doc": [doc.frame.width, doc.frame.height],
+                                        "fitting": [doc.intrinsicContentSize.width, doc.intrinsicContentSize.height],
+                                        "floating": sv.subviews.map { String(describing: type(of: $0)) }])
+        case "debug_scroll":
+            // Not listed as a tool: zooms in, scrolls the timeline sideways for a few seconds and reports how often the main thread got a turn.
+            let seconds = a.num("seconds") ?? 5
+            let before = store.zoom
+            store.zoom = a.num("zoom") ?? 6
+            try await Task.sleep(nanoseconds: 800_000_000)
+            let start = CACurrentMediaTime()
+            var last = start, worst = 0.0, steps = 0, slow = 0
+            while CACurrentMediaTime() - start < seconds {
+                let u = (CACurrentMediaTime() - start) / seconds
+                // Moves the scroll view itself, the way a trackpad does, rather than asking SwiftUI to scroll.
+                if let sv = Self.timelineScrollView() {
+                    let x = CGFloat(3000 * (0.5 - 0.5 * cos(u * 2 * .pi)))
+                    sv.contentView.scroll(to: NSPoint(x: x, y: sv.contentView.bounds.origin.y))
+                    sv.reflectScrolledClipView(sv.contentView)
+                }
+                try await Task.sleep(nanoseconds: 4_000_000)
+                let now = CACurrentMediaTime()
+                if now - last > 0.02 { slow += 1 }
+                worst = max(worst, now - last); last = now; steps += 1
+            }
+            store.zoom = before
+            return CommandResult(json: ["steps": steps, "per_second": Double(steps) / seconds, "worst_ms": worst * 1000, "steps_over_20ms": slow])
         case "debug_zoom":
             // Not listed as a tool: drives the pinch drawing for a few seconds and reports how often the main thread got a turn.
             let seconds = a.num("seconds") ?? 4
@@ -668,6 +700,17 @@ final class Commands {
         for i in 1..<max(1, out.count) where i < out.count { out[i - 1].end = out[i].start }
         store.mutate { $0.scenes = out }
         return CommandResult(json: ["ok": true, "scenes": out.count])
+    }
+
+    /// The widest scroll view in the main window: the timeline.
+    static func timelineScrollView() -> NSScrollView? {
+        var best: NSScrollView?
+        func walk(_ v: NSView) {
+            if let s = v as? NSScrollView, (s.documentView?.frame.width ?? 0) > (best?.documentView?.frame.width ?? 0) { best = s }
+            v.subviews.forEach(walk)
+        }
+        for w in NSApp.windows { if let c = w.contentView { walk(c) } }
+        return best
     }
 
     private func masterJSON(_ p: Project) -> [[String: Any]] {

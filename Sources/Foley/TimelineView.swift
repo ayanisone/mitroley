@@ -4,7 +4,6 @@ import AppKit
 struct TimelineView: View {
     @Environment(Store.self) private var store
     @State private var scroll = TimelineScroll()
-    @State private var position = ScrollPosition(edge: .top)
     @State private var pinch: (zoom: Double, vzoom: Double, time: Double, x: CGFloat, vertical: Bool, base: CGFloat)?
     private var live: ZoomLive { store.zoomLive }
     @State private var settle: Task<Void, Never>?
@@ -17,69 +16,20 @@ struct TimelineView: View {
             let pps = Double(visible - 24) / duration * store.zoom
             let contentWidth = CGFloat(store.project.duration * pps) + 24
             let pinned = Metrics.ruler + Metrics.film + Metrics.scene
-            VStack(spacing: 0) {
-                // Pinned: ruler, filmstrip and scenes stay put while the tracks scroll underneath.
-                HStack(alignment: .top, spacing: 0) {
-                    TimelineCorner().frame(width: Metrics.header).background(Theme.panel).zIndex(2)
-                    Rectangle().fill(Theme.line).frame(width: 1).zIndex(2)
-                    ZStack(alignment: .topLeading) {
-                        VStack(alignment: .leading, spacing: 0) {
-                            RulerView(pps: pps)
-                            FilmstripView(pps: pps)
-                            SceneLane(pps: pps)
-                        }
-                        PlayheadView(pps: pps, handle: true)
-                    }
-                    .frame(width: contentWidth, alignment: .topLeading)
-                    .modifier(FollowScroll(direction: -1))
-                    .frame(width: visible, alignment: .leading)
-                    .clipped()
+            let rows = store.project.rows.count + store.project.tracks.reduce(0) { $0 + ($1.lane == nil ? 0 : 1) }
+            ZStack(alignment: .topLeading) {
+                // One native scroll view for both directions. The ruler strip and the track names float in it.
+                TimelineHost(store: store, scroll: scroll, pps: pps, contentWidth: contentWidth) { total, x, option, ended in
+                    pinched(total: total, at: x, option: option, ended: ended, pps: pps, visible: visible, duration: duration)
                 }
-                .frame(height: pinned)
-                .background(Theme.panel)
-                .zIndex(1)
-
-                // One scroll view for both directions, so two fingers can move diagonally.
-                // The track names ride along inside it and are held at the left edge.
-                ScrollView([.horizontal, .vertical]) {
-                    HStack(alignment: .top, spacing: 0) {
-                        HStack(alignment: .top, spacing: 0) {
-                            TrackHeaders().frame(width: Metrics.header)
-                            Rectangle().fill(Theme.line).frame(width: 1)
-                        }
-                        .background(Theme.panel)
-                        .modifier(FollowScroll(direction: 1))
-                        .zIndex(1)
-                        ZStack(alignment: .topLeading) {
-                            GridLayer(pps: pps)
-                            VStack(alignment: .leading, spacing: 0) {
-                                ForEach(store.project.rows) { row in
-                                    switch row {
-                                    case .group(let group, _):
-                                        GroupLane(group: group, pps: pps)
-                                    case .track(let track):
-                                        TrackLane(track: track, pps: pps)
-                                        if let param = track.lane {
-                                            AutomationLane(track: track, param: param, pps: pps)
-                                        }
-                                    }
-                                }
-                                Rectangle().fill(Color.white.opacity(0.045)).frame(height: Metrics.master)
-                                    .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
-                                Color.clear.frame(height: 44)
-                            }
-                            PlayheadView(pps: pps, handle: false)
-                        }
-                        .frame(width: contentWidth, alignment: .topLeading)
-                        .coordinateSpace(.named("lanes"))
-                    }
-                    .frame(minHeight: max(0, geo.size.height - pinned), alignment: .top)
-                }
-                .scrollPosition($position)
-                .onScrollGeometryChange(for: CGPoint.self) { $0.contentOffset } action: { _, o in
-                    scroll.set(x: o.x, y: o.y)
-                }
+                .clipped()
+                TimelineCorner()
+                    .frame(width: Metrics.header, height: pinned)
+                    .background(Theme.panel)
+                    .overlay(alignment: .trailing) { Rectangle().fill(Theme.line).frame(width: 1).offset(x: 1) }
             }
+            .onChange(of: store.vzoom) { _, _ in store.relayoutTimeline?() }
+            .onChange(of: rows) { _, _ in store.relayoutTimeline?() }
             // While a pinch is under way the timeline is drawn in one pass at the zoom the fingers have reached.
             .overlay(alignment: .topLeading) {
                 ZoomPreview()
@@ -87,53 +37,52 @@ struct TimelineView: View {
                     .clipped()
                     .padding(.leading, Metrics.header + 1)
             }
-            // Pinch to zoom around the pointer. Hold Option and pinch to make the tracks taller or shorter.
-            // Laying out every clip on every tick of a pinch is too slow, so the pinch drives a one-pass drawing of the
-            // timeline (ZoomPreview), and the real timeline is laid out once when the pinch pauses or ends.
-            .gesture(MagnifyGesture()
-                .onChanged { g in
-                    if pinch == nil {
-                        let x = max(0, g.startLocation.x - Metrics.header - 1)
-                        pinch = (store.zoom, store.vzoom, Double(scroll.x + x) / pps, x, NSEvent.modifierFlags.contains(.option), 1)
-                    }
-                    guard let start = pinch else { return }
-                    let m = Double(g.magnification / start.base)
-                    if start.vertical {
-                        // Track height: laid out for real, a few times a second.
-                        let now = CACurrentMediaTime()
-                        if now - lastHeight > 0.1 {
-                            lastHeight = now
-                            store.vzoom = min(3, max(0.75, start.vzoom * m))
-                        }
-                        live.target = min(3, max(0.75, start.vzoom * m))
-                        return
-                    }
-                    let zoom = min(40, max(1, start.zoom * m))
-                    live.target = zoom
-                    live.pps = Double(visible - 24) / duration * zoom
-                    // Keep the moment under the pointer under the pointer.
-                    live.x = max(0, CGFloat(start.time * live.pps) - start.x)
-                    live.active = true
-                    let magnification = g.magnification
-                    settle?.cancel()
-                    settle = Task {
-                        try? await Task.sleep(nanoseconds: 300_000_000)
-                        guard !Task.isCancelled, let now = pinch else { return }
-                        commitZoom()
-                        // Carry on from the new zoom if the fingers are still down.
-                        pinch = (store.zoom, store.vzoom, now.time, now.x, now.vertical, magnification)
-                    }
-                }
-                .onEnded { _ in
-                    settle?.cancel()
-                    commitZoom()
-                    pinch = nil
-                })
             .onChange(of: visible, initial: true) { _, v in scroll.width = v }
         }
         .environment(scroll)
         .environment(live)
         .background(Theme.panel)
+    }
+
+    /// A pinch reported by the scroll view. Laying out every clip on every tick of a pinch is too slow, so the pinch
+    /// drives a one-pass drawing of the timeline (ZoomPreview), and the real timeline is laid out once when it pauses or ends.
+    private func pinched(total: CGFloat, at location: CGFloat, option: Bool, ended: Bool, pps: Double, visible: CGFloat, duration: Double) {
+        if pinch == nil {
+            let x = max(0, location - Metrics.header - 1)
+            pinch = (store.zoom, store.vzoom, Double(scroll.x + x) / pps, x, option, 1)
+        }
+        guard let start = pinch else { return }
+        if ended {
+            settle?.cancel()
+            commitZoom()
+            pinch = nil
+            return
+        }
+        let m = Double(total / start.base)
+        if start.vertical {
+            // Track height: laid out for real, a few times a second.
+            let now = CACurrentMediaTime()
+            live.target = min(3, max(0.75, start.vzoom * m))
+            if now - lastHeight > 0.1 {
+                lastHeight = now
+                store.vzoom = live.target
+            }
+            return
+        }
+        let zoom = min(40, max(1, start.zoom * m))
+        live.target = zoom
+        live.pps = Double(visible - 24) / duration * zoom
+        // Keep the moment under the pointer under the pointer.
+        live.x = max(0, CGFloat(start.time * live.pps) - start.x)
+        live.active = true
+        settle?.cancel()
+        settle = Task {
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled, let now = pinch else { return }
+            commitZoom()
+            // Carry on from the new zoom if the fingers are still down.
+            pinch = (store.zoom, store.vzoom, now.time, now.x, now.vertical, total)
+        }
     }
 
     /// Lays the real timeline out at the zoom the pinch has reached, scrolled to where the drawing was.
@@ -143,11 +92,11 @@ struct TimelineView: View {
             if live.target > 0 { store.vzoom = live.target }
         } else if live.active {
             store.zoom = live.target
-            position.scrollTo(point: CGPoint(x: live.x, y: max(0, scroll.y)))
+            store.scrollTimeline?(CGPoint(x: live.x, y: max(0, scroll.y)))
             // The drawing stays up for a moment so the real timeline never shows half laid out.
             Task {
-                try? await Task.sleep(nanoseconds: 60_000_000)
-                if settle?.isCancelled != false || pinch == nil { live.active = false } else { live.active = false }
+                try? await Task.sleep(nanoseconds: 80_000_000)
+                live.active = false
             }
         }
         live.target = 0
@@ -163,8 +112,10 @@ struct GridLayer: View {
 
     var body: some View {
         if store.showTimeGrid {
-            // Only as wide as the window, and it rides along with the scroll: the lines are drawn for the time on screen.
-            let x0 = Double(max(0, scroll.x))
+            // Drawn for the part of the timeline near the screen, a page at a time, so scrolling does not redraw it.
+            let total = CGFloat(store.project.duration * pps) + 24
+            let w = scroll.window(start: 0, width: total) ?? (0, min(total, scroll.width))
+            let x0 = Double(w.lo)
             let duration = store.project.duration
             let unit = store.gridStep
             Canvas { ctx, size in
@@ -184,8 +135,8 @@ struct GridLayer: View {
                     i += 1
                 }
             }
-            .frame(width: scroll.width + 2)
-            .offset(x: CGFloat(x0))
+            .frame(width: w.hi - w.lo)
+            .offset(x: w.lo)
             .allowsHitTesting(false)
         }
     }

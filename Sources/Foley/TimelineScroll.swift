@@ -55,16 +55,6 @@ struct SlicedCanvas: View {
     }
 }
 
-/// Moves its content sideways with the timeline's scroll position without the parent having to know it.
-struct FollowScroll: ViewModifier {
-    @Environment(TimelineScroll.self) private var scroll
-    /// -1 = slide against the scroll (pinned strips), 1 = ride along with it (the track names).
-    let direction: CGFloat
-    func body(content: Content) -> some View {
-        content.offset(x: direction < 0 ? -scroll.x : max(0, scroll.x))
-    }
-}
-
 /// A pinch in progress: the zoom the fingers have reached, before the real timeline has been laid out at it.
 @Observable final class ZoomLive {
     /// True while the one-pass drawing stands in for the real timeline.

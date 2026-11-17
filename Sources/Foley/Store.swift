@@ -42,6 +42,10 @@ final class Store {
     var zoom = 1.0
     /// The pinch in progress. Its own object, so stretching the timeline does not touch anything that follows the store.
     @ObservationIgnored let zoomLive = ZoomLive()
+    /// Set by the timeline: scrolls it to an x offset. Used by the hidden scroll benchmark.
+    @ObservationIgnored var scrollTimeline: ((CGPoint) -> Void)?
+    /// Set by the timeline: re-measures its scrolling area after row heights change.
+    @ObservationIgnored var relayoutTimeline: (() -> Void)?
     var vzoom = 1.0
     var editMode = EditMode(rawValue: UserDefaults.standard.string(forKey: "editMode") ?? "") ?? .snap {
         didSet { UserDefaults.standard.set(editMode.rawValue, forKey: "editMode") }
