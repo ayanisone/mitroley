@@ -5,7 +5,9 @@ struct TimelineView: View {
     @Environment(Store.self) private var store
     @State private var scroll = TimelineScroll()
     @State private var position = ScrollPosition(edge: .top)
-    @State private var pinch: (zoom: Double, vzoom: Double, time: Double, x: CGFloat, vertical: Bool)?
+    @State private var pinch: (zoom: Double, vzoom: Double, time: Double, x: CGFloat, vertical: Bool, base: CGFloat)?
+    private var live: ZoomLive { store.zoomLive }
+    @State private var settle: Task<Void, Never>?
 
     var body: some View {
         GeometryReader { geo in
@@ -28,6 +30,7 @@ struct TimelineView: View {
                         PlayheadView(pps: pps, handle: true)
                     }
                     .frame(width: contentWidth, alignment: .topLeading)
+                    .modifier(ZoomTransform(width: contentWidth, vertical: false))
                     .modifier(FollowScroll(direction: -1))
                     .frame(width: visible, alignment: .leading)
                     .clipped()
@@ -45,6 +48,7 @@ struct TimelineView: View {
                             Rectangle().fill(Theme.line).frame(width: 1)
                         }
                         .background(Theme.panel)
+                        .modifier(ZoomTransform(width: 0, vertical: true))
                         .modifier(FollowScroll(direction: 1))
                         .zIndex(1)
                         ZStack(alignment: .topLeading) {
@@ -69,6 +73,7 @@ struct TimelineView: View {
                         }
                         .frame(width: contentWidth, alignment: .topLeading)
                         .coordinateSpace(.named("lanes"))
+                        .modifier(ZoomTransform(width: contentWidth, vertical: true))
                     }
                     .frame(minHeight: max(0, geo.size.height - pinned), alignment: .top)
                 }
@@ -78,28 +83,57 @@ struct TimelineView: View {
                 }
             }
             // Pinch to zoom around the pointer. Hold Option and pinch to make the tracks taller or shorter.
+            // While the fingers move, the timeline already on screen is stretched on the GPU, which costs nothing;
+            // it is laid out again at the new zoom once, when the pinch pauses or ends.
             .gesture(MagnifyGesture()
                 .onChanged { g in
                     if pinch == nil {
                         let x = max(0, g.startLocation.x - Metrics.header - 1)
-                        pinch = (store.zoom, store.vzoom, Double(scroll.x + x) / pps, x, NSEvent.modifierFlags.contains(.option))
+                        pinch = (store.zoom, store.vzoom, Double(scroll.x + x) / pps, x, NSEvent.modifierFlags.contains(.option), 1)
                     }
                     guard let start = pinch else { return }
+                    let m = Double(g.magnification / start.base)
                     if start.vertical {
-                        store.vzoom = min(3, max(0.75, start.vzoom * g.magnification))
+                        live.ky = min(3, max(0.75, start.vzoom * m)) / start.vzoom
                     } else {
-                        let zoom = min(40, max(1, start.zoom * g.magnification))
-                        store.zoom = zoom
-                        // Keep the moment under the pointer under the pointer.
-                        let next = Double(visible - 24) / duration * zoom
-                        position.scrollTo(point: CGPoint(x: max(0, CGFloat(start.time * next) - start.x), y: max(0, scroll.y)))
+                        live.kx = min(40, max(1, start.zoom * m)) / start.zoom
+                        live.anchor = CGFloat(start.time * pps)
+                    }
+                    let magnification = g.magnification
+                    settle?.cancel()
+                    settle = Task {
+                        try? await Task.sleep(nanoseconds: 220_000_000)
+                        guard !Task.isCancelled, let now = pinch else { return }
+                        commitZoom(visible: visible, duration: duration)
+                        // Carry on from the new zoom if the fingers are still down.
+                        pinch = (store.zoom, store.vzoom, now.time, now.x, now.vertical, magnification)
                     }
                 }
-                .onEnded { _ in pinch = nil })
+                .onEnded { _ in
+                    settle?.cancel()
+                    commitZoom(visible: visible, duration: duration)
+                    pinch = nil
+                })
             .onChange(of: visible, initial: true) { _, v in scroll.width = v }
         }
         .environment(scroll)
+        .environment(live)
         .background(Theme.panel)
+    }
+
+    /// Lays the timeline out at the zoom the pinch has reached, keeping the moment under the pointer where it is.
+    private func commitZoom(visible: CGFloat, duration: Double) {
+        guard let start = pinch, live.kx != 1 || live.ky != 1 else { return }
+        if start.vertical {
+            store.vzoom = min(3, max(0.75, start.vzoom * live.ky))
+        } else {
+            let zoom = min(40, max(1, start.zoom * live.kx))
+            store.zoom = zoom
+            let next = Double(visible - 24) / duration * zoom
+            position.scrollTo(point: CGPoint(x: max(0, CGFloat(start.time * next) - start.x), y: max(0, scroll.y)))
+        }
+        live.kx = 1
+        live.ky = 1
     }
 }
 

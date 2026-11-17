@@ -64,3 +64,24 @@ struct FollowScroll: ViewModifier {
         content.offset(x: direction < 0 ? -scroll.x : max(0, scroll.x))
     }
 }
+
+/// A pinch in progress: how far the timeline is stretched beyond the zoom it was last laid out at.
+@Observable final class ZoomLive {
+    var kx = 1.0
+    var ky = 1.0
+    /// The point in the timeline (in points from its left edge) that stays put while it stretches.
+    var anchor: CGFloat = 0
+}
+
+/// Stretches its content with the pinch. Only this small wrapper follows the pinch; the lanes inside are not re-evaluated.
+struct ZoomTransform: ViewModifier {
+    @Environment(ZoomLive.self) private var live
+    /// Width of the content, to place the anchor. 0 = this content does not stretch sideways (the track names).
+    let width: CGFloat
+    /// Whether this content grows taller with a track-height pinch.
+    let vertical: Bool
+    func body(content: Content) -> some View {
+        content.scaleEffect(x: width > 0 ? live.kx : 1, y: vertical ? live.ky : 1,
+                            anchor: UnitPoint(x: width > 0 ? live.anchor / width : 0, y: 0))
+    }
+}

@@ -40,6 +40,8 @@ final class Store {
         didSet { if selection != oldValue { stopAudition() } }
     }
     var zoom = 1.0
+    /// The pinch in progress. Its own object, so stretching the timeline does not touch anything that follows the store.
+    @ObservationIgnored let zoomLive = ZoomLive()
     var vzoom = 1.0
     var editMode = EditMode(rawValue: UserDefaults.standard.string(forKey: "editMode") ?? "") ?? .snap {
         didSet { UserDefaults.standard.set(editMode.rawValue, forKey: "editMode") }
