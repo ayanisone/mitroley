@@ -115,26 +115,95 @@ extension Store {
     }
 }
 
-/// The tools, as a column floating at the left of the picture, where there is room around it.
+/// The tools, as a column floating at the left of the picture. It picks the largest size that fits the height it
+/// is given, so in a short window it shrinks instead of spilling over the title bar.
 struct ToolStrip: View {
-    @Environment(Store.self) private var store
     var body: some View {
-        VStack(spacing: 4) {
-            ForEach(Tool.allCases) { t in
-                let on = store.tool == t
-                Button { store.tool = t } label: {
+        ViewThatFits(in: .vertical) {
+            ToolColumn(cell: 34, gap: 4)
+            ToolColumn(cell: 28, gap: 2)
+            ToolColumn(cell: 23, gap: 1)
+            ToolColumn(cell: 19, gap: 0)
+        }
+    }
+}
+
+/// One column of tools with a single selector that glides between them. Click a tool, or press and slide along the
+/// column: the selector follows the pointer exactly, stretches a little with its speed, and settles on the nearest tool.
+private struct ToolColumn: View {
+    @Environment(Store.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let cell: CGFloat
+    let gap: CGFloat
+    /// Where the selector's centre is while it is being dragged, and how fast it is moving.
+    @State private var drag: CGFloat?
+    @State private var speed: CGFloat = 0
+    @State private var pressed = false
+
+    private var step: CGFloat { cell + gap }
+    private var tools: [Tool] { Tool.allCases }
+    private func centre(_ i: Int) -> CGFloat { CGFloat(i) * step + cell / 2 }
+    private func index(at y: CGFloat) -> Int { min(tools.count - 1, max(0, Int((y / step).rounded(.down)))) }
+
+    var body: some View {
+        let selected = tools.firstIndex(of: store.tool) ?? 0
+        let last = centre(tools.count - 1)
+        let y = drag.map { min(last, max(cell / 2, $0)) } ?? centre(selected)
+        // The tool under the selector lights up as it passes, before it settles.
+        let under = drag == nil ? selected : index(at: y)
+        // Moving fast, the selector stretches along its path and thins across it, like a drop of water.
+        let stretch = reduceMotion ? 0 : min(0.32, abs(speed) / 2600)
+        ZStack(alignment: .top) {
+            selector
+                .frame(width: cell, height: cell)
+                .scaleEffect(x: (pressed ? 1.12 : 1) * (1 - stretch * 0.45), y: (pressed ? 1.12 : 1) * (1 + stretch))
+                .offset(y: y - cell / 2)
+                .animation(drag == nil ? (reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.34, dampingFraction: 0.72)) : nil, value: y)
+                .animation(.spring(response: 0.25, dampingFraction: 0.8), value: pressed)
+                .animation(.spring(response: 0.3, dampingFraction: 0.75), value: stretch)
+            VStack(spacing: gap) {
+                ForEach(Array(tools.enumerated()), id: \.element) { i, t in
                     Image(systemName: t.symbol)
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundStyle(on ? Color.black.opacity(0.85) : Theme.secondary)
-                        .frame(width: 32, height: 32)
-                        .background(on ? Theme.accent : Color.clear, in: Circle())
-                        .contentShape(Circle())
+                        .font(.system(size: max(9, cell * 0.38), weight: .semibold))
+                        .foregroundStyle(i == under ? Color.black.opacity(0.85) : Theme.secondary)
+                        .frame(width: cell, height: cell)
+                        .help(t.help)
+                        .animation(.easeOut(duration: 0.12), value: under)
                 }
-                .buttonStyle(PressStyle(scale: 0.9))
-                .help(t.help)
             }
         }
-        .padding(6)
+        .frame(width: cell, height: CGFloat(tools.count) * step - gap)
+        .contentShape(Rectangle())
+        // Responds on press, follows 1:1, and commits to the tool it is over when let go.
+        .gesture(DragGesture(minimumDistance: 0)
+            .onChanged { g in
+                pressed = true
+                drag = g.location.y
+                speed = g.velocity.height
+                let now = index(at: min(last, max(cell / 2, g.location.y)))
+                if tools[now] != store.tool, abs(g.translation.height) < 3 { store.tool = tools[now] }
+            }
+            .onEnded { g in
+                // Where a flick would carry it, not just where it was let go.
+                let landing = g.location.y + g.velocity.height * 0.06
+                store.tool = tools[index(at: min(last, max(cell / 2, landing)))]
+                speed = 0
+                pressed = false
+                drag = nil
+            })
+        .padding(cell > 24 ? 6 : 4)
         .glass(in: Capsule())
+    }
+
+    /// The selector: a tinted lens of glass where the system has it, a lit disc otherwise.
+    @ViewBuilder private var selector: some View {
+        if #available(macOS 26.0, *) {
+            Circle().fill(Theme.accent.opacity(0.92))
+                .glassEffect(.regular.tint(Theme.accent).interactive(), in: Circle())
+        } else {
+            Circle().fill(Theme.accent)
+                .overlay(Circle().fill(LinearGradient(colors: [Color.white.opacity(0.35), .clear], startPoint: .top, endPoint: .center)))
+                .shadow(color: Theme.accent.opacity(0.45), radius: 6, y: 1)
+        }
     }
 }

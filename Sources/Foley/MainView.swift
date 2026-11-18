@@ -205,7 +205,9 @@ struct VideoPane: View {
         .overlay(alignment: .leading) {
             ToolStrip()
                 .padding(.leading, 14)
-                .padding(.bottom, TransportBar.height + Self.gap)
+                // Kept inside the picture area: clear of the title bar above and the transport below.
+                .padding(.top, Self.gap)
+                .padding(.bottom, TransportBar.height + Self.gap * 2)
         }
         .overlay(alignment: .topTrailing) {
             // Cues that were planned but have no sound yet.
