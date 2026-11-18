@@ -153,24 +153,30 @@ private struct ToolColumn: View {
         let under = drag == nil ? selected : index(at: y)
         // Moving fast, the selector stretches along its path and thins across it, like a drop of water.
         let stretch = reduceMotion ? 0 : min(0.32, abs(speed) / 2600)
+        // The icons sit underneath; the lens rides over them, so the tool it is on shows through the glass.
         ZStack(alignment: .top) {
-            selector
-                .frame(width: cell, height: cell)
-                .scaleEffect(x: (pressed ? 1.12 : 1) * (1 - stretch * 0.45), y: (pressed ? 1.12 : 1) * (1 + stretch))
-                .offset(y: y - cell / 2)
-                .animation(drag == nil ? (reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.34, dampingFraction: 0.72)) : nil, value: y)
-                .animation(.spring(response: 0.25, dampingFraction: 0.8), value: pressed)
-                .animation(.spring(response: 0.3, dampingFraction: 0.75), value: stretch)
             VStack(spacing: gap) {
                 ForEach(Array(tools.enumerated()), id: \.element) { i, t in
                     Image(systemName: t.symbol)
                         .font(.system(size: max(9, cell * 0.38), weight: .semibold))
-                        .foregroundStyle(i == under ? Color.black.opacity(0.85) : Theme.secondary)
+                        .foregroundStyle(i == under ? Color.white : Theme.secondary)
+                        // Under the lens the icon swells a little, as it would through a drop of water.
+                        .scaleEffect(i == under ? (pressed ? 1.3 : 1.16) : 1)
                         .frame(width: cell, height: cell)
                         .help(t.help)
-                        .animation(.easeOut(duration: 0.12), value: under)
+                        .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.7), value: under)
+                        .animation(.spring(response: 0.25, dampingFraction: 0.8), value: pressed)
                 }
             }
+            selector
+                .frame(width: cell * 1.12, height: cell * 1.12)
+                .scaleEffect(x: (pressed ? 1.22 : 1) * (1 - stretch * 0.45), y: (pressed ? 1.22 : 1) * (1 + stretch))
+                .offset(x: -cell * 0.06, y: y - cell * 0.56)
+                .frame(width: cell, alignment: .leading)
+                .allowsHitTesting(false)
+                .animation(drag == nil ? (reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.34, dampingFraction: 0.72)) : nil, value: y)
+                .animation(.spring(response: 0.25, dampingFraction: 0.8), value: pressed)
+                .animation(.spring(response: 0.3, dampingFraction: 0.75), value: stretch)
         }
         .frame(width: cell, height: CGFloat(tools.count) * step - gap)
         .contentShape(Rectangle())
@@ -191,19 +197,35 @@ private struct ToolColumn: View {
                 pressed = false
                 drag = nil
             })
-        .padding(cell > 24 ? 6 : 4)
+        .padding(cell > 24 ? 7 : 5)
         .glass(in: Capsule())
     }
 
-    /// The selector: a tinted lens of glass where the system has it, a lit disc otherwise.
-    @ViewBuilder private var selector: some View {
-        if #available(macOS 26.0, *) {
-            Circle().fill(Theme.accent.opacity(0.92))
-                .glassEffect(.regular.tint(Theme.accent).interactive(), in: Circle())
-        } else {
-            Circle().fill(Theme.accent)
-                .overlay(Circle().fill(LinearGradient(colors: [Color.white.opacity(0.35), .clear], startPoint: .top, endPoint: .center)))
-                .shadow(color: Theme.accent.opacity(0.45), radius: 6, y: 1)
+    /// The selector: a drop of clear water sitting on the bar. Almost nothing inside, so the icon shows through; the
+    /// shape is read from its edge: a bright rim where light catches the top, a faint rainbow where the edge bends
+    /// it, a soft glint, and a shadow underneath. Drawn by hand: the system's glass turns milky when it sits on
+    /// another piece of glass, which hid the icon.
+    private var selector: some View {
+        let hues: [Color] = [Color(red: 0.55, green: 0.85, blue: 1), Color(red: 1, green: 0.75, blue: 0.9), Color(red: 1, green: 0.95, blue: 0.7),
+                             Color(red: 0.7, green: 1, blue: 0.85), Color(red: 0.55, green: 0.85, blue: 1)]
+        let rainbow = AngularGradient(colors: hues, center: .center)
+        let body = RadialGradient(colors: [Color.white.opacity(0.02), Color.white.opacity(0.09)], center: .center,
+                                  startRadius: cell * 0.2, endRadius: cell * 0.6)
+        let rim = LinearGradient(colors: [Color.white.opacity(0.9), Color.white.opacity(0.08), Color.white.opacity(0.35)],
+                                 startPoint: .top, endPoint: .bottom)
+        let glintWidth: CGFloat = cell * 0.34, glintHeight: CGFloat = cell * 0.16
+        return ZStack {
+            Circle().fill(body)
+            // The edge bends light: a thin band of colour, strongest at the rim.
+            Circle().strokeBorder(rainbow, lineWidth: 2.2).blur(radius: 1.2).opacity(pressed ? 0.75 : 0.5)
+            // Light from above catches the top of the rim and fades round it.
+            Circle().strokeBorder(rim, lineWidth: 1)
+            // A glint, up and to the left.
+            Ellipse().fill(Color.white.opacity(0.28))
+                .frame(width: glintWidth, height: glintHeight)
+                .blur(radius: 1.5)
+                .offset(x: -cell * 0.16, y: -cell * 0.3)
         }
+        .shadow(color: Color.black.opacity(0.45), radius: 5, y: 3)
     }
 }
