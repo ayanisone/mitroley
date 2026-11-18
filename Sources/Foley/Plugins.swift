@@ -24,8 +24,13 @@ struct PluginSlot: Codable, Equatable, Identifiable {
 enum Plugins {
     /// Every Audio Unit effect installed on this Mac.
     static func installed() -> [AVAudioUnitComponent] {
-        let any = AudioComponentDescription(componentType: kAudioUnitType_Effect, componentSubType: 0, componentManufacturer: 0, componentFlags: 0, componentFlagsMask: 0)
-        return AVAudioUnitComponentManager.shared().components(matching: any)
+        // Two kinds of effect: plain ones, and "music effects" that can also take MIDI (FabFilter ships its plug-ins as these).
+        var found: [AVAudioUnitComponent] = []
+        for type in [kAudioUnitType_Effect, kAudioUnitType_MusicEffect] {
+            let any = AudioComponentDescription(componentType: type, componentSubType: 0, componentManufacturer: 0, componentFlags: 0, componentFlagsMask: 0)
+            found += AVAudioUnitComponentManager.shared().components(matching: any)
+        }
+        return found
             .sorted { ($0.manufacturerName, $0.name) < ($1.manufacturerName, $1.name) }
     }
 

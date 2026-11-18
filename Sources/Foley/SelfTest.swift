@@ -129,6 +129,15 @@ enum SelfTest {
             check("Audio Unit runs on a track", r0 > 0.01 && r1 < r0 * 0.9 && abs(r2 - r0) < r0 * 0.02,
                   String(format: "noise level %.4f plain, %.4f through Apple's low-pass, %.4f bypassed", r0, r1, r2))
 
+            // A "music effect" kind of Audio Unit, if this Mac has one, loads and passes sound in the same chain.
+            if let music = Plugins.installed().first(where: { $0.audioComponentDescription.componentType == kAudioUnitType_MusicEffect }) {
+                let d = music.audioComponentDescription
+                plug.tracks[0].plugins = [PluginSlot(name: music.name, maker: music.manufacturerName, type: d.componentType, subtype: d.componentSubType, manufacturer: d.componentManufacturer)]
+                let through = try Exporter.render(plug, mode: .stereo, tail: 0, resolve: resolve)
+                check("music-effect Audio Unit loads", rms(through.l, 0.5, 2) > 0.001,
+                      String(format: "%@ %@: noise level %.4f through it at its default settings", music.manufacturerName, music.name, rms(through.l, 0.5, 2)))
+            }
+
             // 9. Fold-downs of the 7.1.4 mix, on synthetic channels.
             downmixChecks(check)
             busChecks(check)
