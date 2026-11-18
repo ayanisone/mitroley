@@ -87,6 +87,7 @@ struct MainView: View {
         .sheet(isPresented: $store.showSettings) { SettingsSheet().environment(store) }
         // Icons only, and no "Icon and Text" choice to fall into: it also overrides a mode saved by an earlier launch.
         .background(WindowAccessor { w in
+            TitleBarDoubleClick.install()
             guard let bar = w.toolbar else { return }
             bar.displayMode = .iconOnly
             bar.allowsDisplayModeCustomization = false

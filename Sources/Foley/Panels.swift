@@ -4,6 +4,7 @@ import AppKit
 // MARK: - Claude
 
 struct ClaudePanel: View {
+    @State private var dictation = Dictation()
     @Environment(Store.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var input = ""
@@ -72,6 +73,9 @@ struct ClaudePanel: View {
                 QuietEditor(placeholder: "Tell Claude what to do with the sound", text: $input, height: 62) {
                     if !agent.running, !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { send(input) }
                 }
+                if let problem = dictation.problem {
+                    Text(problem).font(.system(size: 11.5)).foregroundStyle(Theme.danger).fixedSize(horizontal: false, vertical: true)
+                }
                 HStack {
                     if agent.running {
                         Button("Stop") { agent.stop() }.buttonStyle(PillButtonStyle())
@@ -81,8 +85,18 @@ struct ClaudePanel: View {
                             .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                             .keyboardShortcut(.return, modifiers: .command)
                     }
+                    Button { dictation.toggle(typed: input) { input = $0 } } label: {
+                        Image(systemName: dictation.listening ? "mic.fill" : "mic")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(dictation.listening ? Color.white : Theme.secondary)
+                            .frame(width: 30, height: 30)
+                            .background(dictation.listening ? Theme.danger : Color.white.opacity(0.07), in: Circle())
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(PressStyle(scale: 0.92))
+                    .help(dictation.listening ? "Stop listening" : "Speak instead of typing")
                     Spacer()
-                    Text("Return to send · Shift-Return for a new line").font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+                    Text(dictation.listening ? "Listening" : "Return to send · Shift-Return for a new line").font(.system(size: 11)).foregroundStyle(Theme.tertiary)
                 }
             }
             .padding(16)
@@ -91,6 +105,7 @@ struct ClaudePanel: View {
     }
 
     private func send(_ text: String) {
+        dictation.stop()
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return }
         input = ""
