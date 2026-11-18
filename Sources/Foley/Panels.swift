@@ -4,6 +4,8 @@ import AppKit
 // MARK: - Claude
 
 struct ClaudePanel: View {
+    @AppStorage("claudeEffort") private var effort = "high"
+    @AppStorage("claudeModel") private var model = "claude-opus-5-5"
     @State private var dictation = Dictation()
     @Environment(Store.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -80,10 +82,34 @@ struct ClaudePanel: View {
                     if agent.running {
                         Button("Stop") { agent.stop() }.buttonStyle(PillButtonStyle())
                     } else {
-                        Button("Send") { send(input) }
-                            .buttonStyle(PillButtonStyle(prominent: true))
-                            .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                            .keyboardShortcut(.return, modifiers: .command)
+                        // Return sends, so this spot holds how hard Claude should think instead of a Send button.
+                        Menu {
+                            Section("Effort") {
+                                ForEach([("low", "Low", "Fastest and cheapest. Small, clear jobs"), ("medium", "Medium", "A balance"), ("high", "High", "Thinks longest. Best for fitting a whole film")], id: \.0) { e in
+                                    Button { effort = e.0 } label: {
+                                        Text(effort == e.0 ? "✓ \(e.1)" : "    \(e.1)")
+                                        Text(e.2)
+                                    }
+                                }
+                            }
+                            Section("Model") {
+                                ForEach([("claude-opus-5-5", "Claude Opus 5.5"), ("claude-fable-5-2", "Claude Fable 5.2"), ("claude-sonnet-5-5", "Claude Sonnet 5.5")], id: \.0) { m in
+                                    Button(model == m.0 ? "✓ \(m.1)" : "    \(m.1)") { model = m.0 }
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "gauge.with.dots.needle.50percent").font(.system(size: 11, weight: .semibold))
+                                Text(effort.capitalized).font(.system(size: 12, weight: .semibold))
+                                Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(Theme.tertiary)
+                            }
+                            .foregroundStyle(Color.white)
+                            .padding(.horizontal, 11).frame(height: 30)
+                            .background(Color.white.opacity(0.08), in: Capsule())
+                            .contentShape(Capsule())
+                        }
+                        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                        .help("How hard Claude thinks before it acts, and which model it uses. Applies from the next message.")
                     }
                     Button { dictation.toggle(typed: input) { input = $0 } } label: {
                         Image(systemName: dictation.listening ? "mic.fill" : "mic")
@@ -196,8 +222,30 @@ struct SettingsSheet: View {
     @AppStorage("elevenModel") private var elevenModel = "eleven_text_to_sound_v3"
     @AppStorage("elevenMusic") private var elevenMusic = "music_v2_5"
     @AppStorage("defaultMixFormat") private var defaultFormat = MixFormat.atmos714.rawValue
+    @AppStorage("sessionsFolder") private var sessionsFolder = ""
+    @AppStorage("exportsFolder") private var exportsFolder = ""
+    @AppStorage("autosaveSeconds") private var autosave = 0.0
+    @AppStorage("hoverHelp") private var hoverHelp = true
 
+    private func folderRow(_ title: String, _ path: String, reset: (() -> Void)?, choose: @escaping () -> Void) -> some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.system(size: 12))
+                Text((path as NSString).abbreviatingWithTildeInPath).font(.system(size: 11)).foregroundStyle(Theme.secondary).lineLimit(1).truncationMode(.middle)
+            }
+            Spacer(minLength: 8)
+            if let reset { Button("Default", action: reset).buttonStyle(PillButtonStyle()) }
+            Button("Choose…", action: choose).buttonStyle(PillButtonStyle())
+        }
+    }
+
+    // Scrolls, so the sheet fits a small window however many settings there are.
     var body: some View {
+        ScrollView { content }
+            .frame(width: 460, height: min(780, (NSApp.mainWindow?.frame.height ?? 800) - 90))
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Settings").font(.system(size: 20, weight: .semibold)).tracking(-0.3)
 
@@ -232,6 +280,25 @@ struct SettingsSheet: View {
             Picker("Format for new sessions", selection: $defaultFormat) {
                 ForEach(MixFormat.allCases) { f in Text(f.title).tag(f.rawValue) }
             }
+
+            SectionTitle("Sessions and files")
+            folderRow("New sessions go in", sessionsFolder.isEmpty ? Places.sessions.path : sessionsFolder, reset: sessionsFolder.isEmpty ? nil : { sessionsFolder = "" }) {
+                if let u = Places.chooseFolder("Choose the folder new sessions are made in.", start: Places.sessions) { sessionsFolder = u.path }
+            }
+            folderRow("Exports go in", exportsFolder.isEmpty ? "Each session's own Exports folder" : exportsFolder, reset: exportsFolder.isEmpty ? nil : { exportsFolder = "" }) {
+                if let u = Places.chooseFolder("Choose the folder exports are written to.", start: Places.exports) { exportsFolder = u.path }
+            }
+            Picker("Save automatically", selection: $autosave) {
+                Text("After every change").tag(0.0)
+                Text("Every minute").tag(60.0)
+                Text("Every 5 minutes").tag(300.0)
+                Text("Every 10 minutes").tag(600.0)
+            }
+            Toggle("Show a hint when the pointer rests on a button", isOn: $hoverHelp)
+                .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
+                .onChange(of: hoverHelp) { _, _ in store.applyHoverHelp() }
+            Text("Hints apply the next time mitroley is opened. ⌘S saves at any time, and the session is always saved when you quit.")
+                .font(.system(size: 11.5)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
 
             SectionTitle("Claude")
             SecureField(Secrets.has(.anthropic) ? "Paste a new key to replace the saved one" : "Anthropic API key", text: $anthropic)
@@ -279,7 +346,6 @@ struct SettingsSheet: View {
             .padding(.top, 4)
         }
         .padding(22)
-        .frame(width: 460)
     }
 }
 
@@ -292,38 +358,61 @@ struct ExportSheet: View {
     @State private var working = false
     @State private var result: (url: URL, summary: String)?
     @State private var failure: String?
+    @State private var destination = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Export").font(.system(size: 20, weight: .semibold)).tracking(-0.3)
-            ForEach(ExportFormat.allCases) { f in
-                let on = f == format
-                let unavailable = f == .movie && store.project.video == nil
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: on ? "largecircle.fill.circle" : "circle")
-                        .font(.system(size: 15))
-                        .foregroundStyle(on ? Theme.accent : Theme.tertiary)
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            Text(f.title).font(.system(size: 13, weight: .semibold))
-                            if f == store.project.format.export {
-                                Text("Session format").font(.system(size: 9.5, weight: .semibold))
-                                    .foregroundStyle(Theme.accent)
-                                    .padding(.horizontal, 6).padding(.vertical, 2)
-                                    .background(Theme.accent.opacity(0.15), in: Capsule())
+            // Every format on one line; only the chosen one spells itself out, so the sheet fits any window.
+            ScrollView {
+                VStack(spacing: 5) {
+                    ForEach(ExportFormat.allCases) { f in
+                        let on = f == format
+                        let unavailable = f == .movie && store.project.video == nil
+                        HStack(alignment: .top, spacing: 9) {
+                            Image(systemName: on ? "largecircle.fill.circle" : "circle")
+                                .font(.system(size: 14))
+                                .foregroundStyle(on ? Theme.accent : Theme.tertiary)
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(spacing: 6) {
+                                    Text(f.title).font(.system(size: 12.5, weight: .semibold))
+                                    if f == store.project.format.export {
+                                        Text("Session format").font(.system(size: 9.5, weight: .semibold))
+                                            .foregroundStyle(Theme.accent)
+                                            .padding(.horizontal, 6).padding(.vertical, 2)
+                                            .background(Theme.accent.opacity(0.15), in: Capsule())
+                                    }
+                                }
+                                if on || unavailable {
+                                    Text(unavailable ? "Needs a video in the session" : f.detail)
+                                        .font(.system(size: 11.5)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+                                }
                             }
+                            Spacer(minLength: 0)
                         }
-                        Text(unavailable ? "Needs a video in the session" : f.detail)
-                            .font(.system(size: 11.5)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 10).padding(.vertical, 7)
+                        .background(on ? Theme.accent.opacity(0.12) : Theme.raised, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                        .contentShape(Rectangle())
+                        .opacity(unavailable ? 0.45 : 1)
+                        .onTapGesture { if !unavailable && !working { format = f; result = nil; failure = nil } }
                     }
-                    Spacer(minLength: 0)
                 }
-                .padding(10)
-                .background(on ? Theme.accent.opacity(0.12) : Theme.raised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .contentShape(Rectangle())
-                .opacity(unavailable ? 0.45 : 1)
-                .onTapGesture { if !unavailable && !working { format = f; result = nil; failure = nil } }
             }
+            .frame(maxHeight: max(180, (NSApp.mainWindow?.frame.height ?? 800) - 330))
+            HStack(spacing: 8) {
+                Image(systemName: "folder").font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+                Text((store.exportsFolder.path as NSString).abbreviatingWithTildeInPath)
+                    .font(.system(size: 11.5)).foregroundStyle(Theme.secondary).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 6)
+                Button("Change…") {
+                    if let u = Places.chooseFolder("Choose the folder exports are written to.", start: store.exportsFolder) {
+                        UserDefaults.standard.set(u.path, forKey: "exportsFolder")
+                        destination += 1
+                    }
+                }
+                .buttonStyle(PillButtonStyle())
+            }
+            .id(destination)
             if let result {
                 Label("\(result.url.lastPathComponent) · \(result.summary)", systemImage: "checkmark.circle.fill")
                     .font(.system(size: 12)).foregroundStyle(Color(red: 0.3, green: 0.85, blue: 0.5))
@@ -357,5 +446,6 @@ struct ExportSheet: View {
         .padding(22)
         .frame(width: 480)
         .onAppear { format = store.project.format.export }
+        .onExitCommand { if !working { dismiss() } }
     }
 }

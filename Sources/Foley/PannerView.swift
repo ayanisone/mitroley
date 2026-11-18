@@ -36,21 +36,26 @@ enum PannerMath {
         return v
     }
 
-    /// Half the width, in degrees, of the arc of speakers that carry the sound: every speaker within
-    /// 12 dB of the loudest. Near the centre the sound is everywhere, so the arc opens to a full ring.
+    /// Half the width, in degrees, of the lit arc: how widely the sound is spread around the listener. It is the
+    /// energy-weighted spread of the speakers carrying the sound, so it changes smoothly as the puck moves and never
+    /// jumps from one speaker to the next. Near the centre the sound is everywhere and the arc opens to a full ring.
     static func spread(_ p: Vec3, gains: [Float]) -> Double {
         let az = azimuth(p.x, p.y)
-        let top = gains.enumerated().filter { $0.offset != 3 }.map(\.element).max() ?? 0
-        var half = 10.0
-        if top > 0 {
-            for (i, g) in gains.enumerated() where i != 3 && g >= top * 0.25 {
-                let s = Speakers.places[i]
-                half = max(half, abs(wrap(azimuth(s.x, s.y) - az)))
-            }
+        var energy = 0.0, moment = 0.0
+        for (i, g) in gains.enumerated() where i != 3 && g > 0 {
+            let s = Speakers.places[i]
+            let d = wrap(azimuth(s.x, s.y) - az), e = Double(g * g)
+            energy += e
+            moment += e * d * d
         }
+        var half = energy > 0 ? 14 + 1.5 * (moment / energy).squareRoot() : 14
         let d = disc(p.x, p.y), r = Double(hypot(d.x, d.y))
-        if r < 0.3 { half = max(half, 180 * (1 - r / 0.3)) }
-        return min(180, half)
+        if r < 0.45 {
+            // Ease towards the full ring over the inner part of the disc.
+            let t = 1 - r / 0.45
+            half += (180 - half) * t * t * (3 - 2 * t)
+        }
+        return min(180, max(14, half))
     }
 }
 

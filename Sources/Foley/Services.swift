@@ -309,10 +309,15 @@ enum ElevenLabs {
         return (obj["voice_id"] as? String) ?? voice
     }
 
-    static func speech(_ text: String, voice: String) async throws -> (data: Data, ext: String) {
+    static func speech(_ text: String, voice: String, settings: VoiceSettings? = nil) async throws -> (data: Data, ext: String) {
         var req = try authed("https://api.elevenlabs.io/v1/text-to-speech/\(voice)?output_format=mp3_44100_128", method: "POST")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["text": text, "model_id": voiceModel])
+        var body: [String: Any] = ["text": text, "model_id": settings?.model ?? voiceModel]
+        if let s = settings {
+            body["voice_settings"] = ["stability": s.stability, "similarity_boost": s.similarity, "style": s.style,
+                                      "use_speaker_boost": s.boost, "speed": s.speed]
+        }
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, resp) = try await URLSession.shared.data(for: req)
         guard let http = resp as? HTTPURLResponse else { throw ServiceError(message: "No response from ElevenLabs.") }
         guard http.statusCode == 200 else { throw ServiceError(message: "ElevenLabs voice: " + describe(data, status: http.statusCode)) }

@@ -16,6 +16,11 @@ final class AgentState {
     var running = false
     @ObservationIgnored private var task: Task<Void, Never>?
 
+    /// How hard Claude thinks before it acts: low, medium or high. High unless changed in the Claude panel.
+    static var effort: String {
+        let e = UserDefaults.standard.string(forKey: "claudeEffort") ?? "high"
+        return ["low", "medium", "high"].contains(e) ? e : "high"
+    }
     static var model: String { UserDefaults.standard.string(forKey: "claudeModel") ?? "claude-opus-5-5" }
 
     static let system = """
@@ -193,7 +198,7 @@ final class AgentState {
             "tools": Commands.tools,
             "messages": messages,
             "thinking": ["type": "adaptive"],
-            "output_config": ["effort": "high"],
+            "output_config": ["effort": Self.effort],
             "fallbacks": "default",
             "cache_control": ["type": "ephemeral"],
         ]

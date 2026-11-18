@@ -305,6 +305,16 @@ struct TrackHeader: View {
                     Slide(value: track.volume, range: -48...12, tint: track.kind.color, reset: 0, begin: { store.beginGesture() }) { v in
                         store.live { p in if let i = p.trackIndex(track.id) { p.tracks[i].volume = v } }
                     }
+                    // Pan: left and right. On a spatial track it moves the sound's left–right position.
+                    Slide(value: track.spatial ? track.position.x : track.pan, range: -1...1, tint: Theme.secondary, reset: 0, begin: { store.beginGesture() }) { v in
+                        let x = abs(v) < 0.04 ? 0 : v
+                        store.live { p in
+                            guard let i = p.trackIndex(track.id) else { return }
+                            if p.tracks[i].spatial { p.tracks[i].position.x = x } else { p.tracks[i].pan = x }
+                        }
+                    }
+                    .frame(width: 46)
+                    .help("Pan: \(panLabel). Double-click to centre.")
                     TrackMeter(id: track.id, color: track.kind.color)
                 }
             }
@@ -352,6 +362,10 @@ struct TrackHeader: View {
             Divider()
             Button("Move up") { store.moveTrack(track.id, -1) }.disabled(!store.canMoveTrack(track.id, -1))
             Button("Move down") { store.moveTrack(track.id, 1) }.disabled(!store.canMoveTrack(track.id, 1))
+            Menu("Export This Track") {
+                Button("With its effects…") { store.exportTrackAsking(track.id, effects: true) }
+                Button("Without effects…") { store.exportTrackAsking(track.id, effects: false) }
+            }
             Menu("Group") { GroupMenuItems(track: track) }
             Divider()
             Button("Delete Track", role: .destructive) {
@@ -359,6 +373,11 @@ struct TrackHeader: View {
                 store.deleteSelection()
             }
         }
+    }
+
+    private var panLabel: String {
+        let v = track.spatial ? track.position.x : track.pan
+        return abs(v) < 0.005 ? "centre" : String(format: "%@ %.0f", v < 0 ? "left" : "right", abs(v) * 100)
     }
 
     private func edit(_ change: @escaping (inout Track) -> Void) {
@@ -998,6 +1017,7 @@ struct ClipView: View {
             Button("Duplicate") { store.selection = .clip(clip.id); store.duplicateClip() }
             // Not disabled by the playhead's position: reading it here would redraw every clip on every frame of playback.
             Button("Split at Playhead") { store.splitClip(clip.id) }
+            Button("Download Sound…") { store.downloadClipAsking(clip.id) }.disabled(clip.take == nil)
             Button("Crossfade with Neighbour") { store.crossfade(clip.id) }
                 .disabled(track.crossfadePartner(of: clip.id) == nil)
             Menu("Fade In") {

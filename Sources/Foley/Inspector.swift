@@ -268,6 +268,7 @@ struct TrackPanel: View {
     @State private var length = 3.0
     @State private var takes = 3
     @State private var loop = false
+    @AppStorage("sfxInfluence") private var influence = 0.3
 
     private func live(_ change: @escaping (inout Track) -> Void) {
         store.live { p in if let i = p.trackIndex(track.id) { change(&p.tracks[i]) } }
@@ -293,6 +294,10 @@ struct TrackPanel: View {
         Field(title: "Length", value: shortTime(length)) {
             Slide(value: length, range: 0.5...30, log: true, tint: track.kind.color, reset: 3, begin: {}) { length = ($0 * 10).rounded() / 10 }
         }
+        Field(title: "Prompt influence", value: String(format: "%.0f%%", influence * 100)) {
+            Slide(value: influence, range: 0...1, tint: track.kind.color, reset: 0.3, begin: {}) { influence = ($0 * 20).rounded() / 20 }
+        }
+        .help("How literally ElevenLabs follows the description. Higher is closer to the words with less variety between takes; lower is freer.")
         HStack(spacing: 10) {
             Stepper("\(takes) take\(takes == 1 ? "" : "s")", value: $takes, in: 1...4).font(.system(size: 12))
             Spacer()
@@ -302,7 +307,7 @@ struct TrackPanel: View {
             Button("Generate at Playhead") {
                 let text = prompt, start = store.player.time
                 Task {
-                    let id = await store.generate(prompt: text, track: track.id, start: start, duration: length, takes: takes, loop: loop, influence: 0.3)
+                    let id = await store.generate(prompt: text, track: track.id, start: start, duration: length, takes: takes, loop: loop, influence: influence)
                     if store.project.locate(clip: id) != nil { store.selection = .clip(id) }
                 }
             }

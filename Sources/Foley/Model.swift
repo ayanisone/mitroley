@@ -481,6 +481,7 @@ struct Project: Codable, Equatable {
     var surroundTrim: Double?       // dB on the surrounds when the mix is folded to fewer speakers
     var heightTrim: Double?         // dB on the height speakers when folded
     var dynamics: BusDynamics?      // before the rack: master compressor and limiter. Read once, then cleared
+    var voice: VoiceSettings?       // how spoken lines are made: voice, model, stability and so on
     var rack: [Effect]?             // master effects; nil = a session from before the rack
     var mixFormat: MixFormat?       // what the session is mixed for; nil = 7.1.4
     var format: MixFormat { mixFormat ?? .atmos714 }

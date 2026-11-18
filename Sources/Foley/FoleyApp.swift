@@ -85,8 +85,12 @@ struct FoleyApp: App {
         .defaultSize(width: 1440, height: 900)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("New Session") { store.create(named: "Untitled") }.keyboardShortcut("n")
+                Button("New Session…") { store.newSessionAsking() }.keyboardShortcut("n")
                 Button("Open…") { Panels.openProject(store) }.keyboardShortcut("o")
+                Divider()
+                Button("Save") { store.saveNow() }.keyboardShortcut("s")
+                Button("Save As…") { store.saveAs() }.keyboardShortcut("s", modifiers: [.command, .shift])
+                Button("Rename Session…") { store.renameSessionAsking() }
                 Divider()
                 Button("Import Video…") { Panels.importVideo(store) }.keyboardShortcut("i")
                 Button("Import Revised Cut…") { Panels.importRevision(store) }.keyboardShortcut("i", modifiers: [.command, .shift])
@@ -102,6 +106,10 @@ struct FoleyApp: App {
             CommandGroup(replacing: .undoRedo) {
                 Button("Undo") { store.undo() }.keyboardShortcut("z").disabled(!store.canUndo)
                 Button("Redo") { store.redo() }.keyboardShortcut("z", modifiers: [.command, .shift]).disabled(!store.canRedo)
+            }
+            CommandGroup(replacing: .help) {
+                Button("Send a Suggestion…") { Panels.suggest() }
+                Button("mitroley on GitHub") { NSWorkspace.shared.open(URL(string: "https://github.com/ayanisone/mitroley")!) }
             }
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") { store.showSettings = true }.keyboardShortcut(",")
@@ -174,6 +182,9 @@ enum Keys {
             case 53 where store.loopPending != nil: // esc: drop a half-set loop
                 store.loopPending = nil
                 return nil
+            case 53 where store.showClaude && !store.showExport && !store.showSettings: // esc: put the assistant away
+                store.showClaude = false
+                return nil
             case 51, 117: // delete
                 store.deleteSelection()
                 return nil
@@ -203,6 +214,11 @@ enum Keys {
 
 @MainActor
 enum Panels {
+    /// Opens a new issue on the project's GitHub page: the suggestion box.
+    static func suggest() {
+        NSWorkspace.shared.open(URL(string: "https://github.com/ayanisone/mitroley/issues/new?title=Suggestion%3A%20")!)
+    }
+
     static let videoTypes: [UTType] = [.movie, .video, .mpeg4Movie, .quickTimeMovie]
     static let audioTypes: [UTType] = [.audio, .wav, .mp3, .aiff, .mpeg4Audio]
 

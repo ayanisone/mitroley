@@ -115,30 +115,65 @@ struct VoicePicker: View {
     }
 }
 
+/// How spoken lines are made. Saved with the session.
+struct VoiceSettings: Codable, Equatable {
+    var id = ""                             // the voice's ID, copied from ElevenLabs
+    var model = "eleven_multilingual_v2"
+    var stability = 0.5                     // 0…1: lower is more expressive, higher more even
+    var similarity = 0.75                   // 0…1: how closely it sticks to the original voice
+    var style = 0.0                         // 0…1: exaggerates the voice's style
+    var speed = 1.0                         // 0.7…1.2
+    var boost = true                        // speaker boost
+
+    static let models = [("eleven_v3", "Eleven v3 (most expressive)"), ("eleven_multilingual_v2", "Multilingual v2"),
+                         ("eleven_turbo_v2_5", "Turbo v2.5 (fast)"), ("eleven_flash_v2_5", "Flash v2.5 (fastest)")]
+}
+
 struct VoiceOverSection: View {
     @Environment(Store.self) private var store
     let track: Track
     @State private var text = ""
-    @State private var voice: Voice?
     @State private var working = false
 
+    private var settings: VoiceSettings { store.project.voice ?? VoiceSettings() }
+    private func set(_ change: @escaping (inout VoiceSettings) -> Void) {
+        store.live { p in var v = p.voice ?? VoiceSettings(); change(&v); p.voice = v }
+    }
+    private func slide(_ kp: WritableKeyPath<VoiceSettings, Double>, _ range: ClosedRange<Double>, reset: Double) -> Slide {
+        Slide(value: settings[keyPath: kp], range: range, tint: track.kind.color, reset: reset, begin: { store.beginGesture() }) { v in
+            set { $0[keyPath: kp] = (v * 100).rounded() / 100 }
+        }
+    }
+
     var body: some View {
+        let s = settings
+        let id = s.id.trimmingCharacters(in: .whitespacesAndNewlines)
         SectionTitle("Voice-over")
         QuietEditor(placeholder: "A line to say", text: $text, height: 58)
-        VoicePicker(current: voice?.name) { voice = $0 }
+        QuietField(placeholder: "Voice ID from ElevenLabs", text: Binding(get: { s.id }, set: { v in set { $0.id = v } }))
+        Caption("In ElevenLabs, open the voice's menu and choose Copy voice ID, then paste it here. Any voice in your account or the voice library works.")
+        Picker("Model", selection: Binding(get: { s.model }, set: { v in set { $0.model = v } })) {
+            ForEach(VoiceSettings.models, id: \.0) { m in Text(m.1).tag(m.0) }
+        }
+        .font(.system(size: 12))
+        Field(title: "Stability", value: String(format: "%.0f%%", s.stability * 100)) { slide(\.stability, 0...1, reset: 0.5) }
+        Field(title: "Similarity", value: String(format: "%.0f%%", s.similarity * 100)) { slide(\.similarity, 0...1, reset: 0.75) }
+        Field(title: "Style", value: String(format: "%.0f%%", s.style * 100)) { slide(\.style, 0...1, reset: 0) }
+        Field(title: "Speed", value: String(format: "%.2f×", s.speed)) { slide(\.speed, 0.7...1.2, reset: 1) }
+        Toggle("Speaker boost", isOn: Binding(get: { s.boost }, set: { v in set { $0.boost = v } }))
+            .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
         HStack(spacing: 8) {
             Button(working ? "Speaking…" : "Speak at Playhead") {
-                guard let v = voice else { return }
                 let line = text, at = store.player.time
                 working = true
                 Task {
-                    do { store.selection = .clip(try await store.speak(line, voice: v, track: track.id, start: at)) }
+                    do { store.selection = .clip(try await store.speak(line, voice: Voice(id: id, name: "Voice"), track: track.id, start: at)) }
                     catch { store.say(error.localizedDescription, error: true) }
                     working = false
                 }
             }
             .buttonStyle(PillButtonStyle(prominent: true))
-            .disabled(working || voice == nil || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .disabled(working || id.isEmpty || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button("Import…") { Panels.importAudio(store, track: track.id) }.buttonStyle(PillButtonStyle())
         }
         if store.project.video != nil {

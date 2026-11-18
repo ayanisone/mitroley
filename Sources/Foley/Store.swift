@@ -37,7 +37,13 @@ final class Store {
     var project = Project.starter()
     var folder: URL
     var selection: Selection = .none {
-        didSet { if selection != oldValue { stopAudition() } }
+        didSet {
+            guard selection != oldValue else { return }
+            stopAudition()
+            // Clicking a clip, track, scene or space shows its settings, even while the assistant is open
+            // (but not while Claude is working and selecting things itself).
+            if selection != .none, showClaude, !agent.running { showClaude = false }
+        }
     }
     var zoom = 1.0
     /// The pinch in progress. Its own object, so stretching the timeline does not touch anything that follows the store.
@@ -96,10 +102,17 @@ final class Store {
     @ObservationIgnored lazy var commands = Commands(store: self)
     @ObservationIgnored var server: ControlServer?
 
-    static var library: URL { AppPaths.library }
+    static var library: URL { Places.sessions }
+    @ObservationIgnored private var dirty = false
+    @ObservationIgnored private var saveTimer: Timer?
 
     init() {
         folder = Store.library.appendingPathComponent("Untitled." + AppPaths.sessionExtension, isDirectory: true)
+        // Whatever the autosave interval, nothing is lost on quit.
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.save() }
+        }
+        applyHoverHelp()
         if let last = UserDefaults.standard.string(forKey: "lastProject"),
            FileManager.default.fileExists(atPath: last + "/project.json") {
             open(URL(fileURLWithPath: last))
@@ -155,9 +168,22 @@ final class Store {
     private func changed() {
         player.sync(project, resolve: { [folder] in Store.url(for: $0, in: folder) })
         saveWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.save() }
-        saveWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+        dirty = true
+        let every = Places.autosave
+        if every <= 0 {
+            // Save shortly after every change.
+            let work = DispatchWorkItem { [weak self] in self?.save() }
+            saveWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+        } else if saveTimer == nil || saveTimer?.timeInterval != every {
+            // Save on a timer, and only when something has changed since the last save.
+            saveTimer?.invalidate()
+            let t = Timer(timeInterval: every, repeats: true) { [weak self] _ in
+                Task { @MainActor in if self?.dirty == true { self?.save() } }
+            }
+            RunLoop.main.add(t, forMode: .common)
+            saveTimer = t
+        }
     }
 
     func say(_ text: String, error: Bool = false) {
@@ -190,6 +216,7 @@ final class Store {
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
         guard let data = try? enc.encode(project) else { return }
+        dirty = false
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try? data.write(to: folder.appendingPathComponent("project.json"), options: .atomic)
     }
@@ -202,6 +229,13 @@ final class Store {
             url = Store.library.appendingPathComponent("\(name) \(n)." + AppPaths.sessionExtension, isDirectory: true)
             n += 1
         }
+        create(at: url)
+    }
+
+    /// Makes an empty session in the folder `url` (which ends in .mitroley).
+    func create(at url: URL) {
+        save()
+        try? FileManager.default.removeItem(at: url)
         folder = url
         project = Project.starter()
         project.name = url.deletingPathExtension().lastPathComponent
@@ -517,6 +551,7 @@ final class Store {
         let clip = project.tracks[loc.track].clips[loc.clip]
         if !marked { live { p in if let l = p.locate(clip: clipID) { p.tracks[l.track].clips[l.clip].pending += count; p.tracks[l.track].clips[l.clip].error = nil } } }
         // ElevenLabs makes 0.5–30 s. Longer beds are generated as loops and tiled.
+        let voiceSettings = project.voice
         let genDuration = min(30, max(0.5, clip.duration))
         let loop = clip.loop
         let audio = subfolder("Audio")
@@ -524,7 +559,7 @@ final class Store {
             for _ in 0..<count {
                 group.addTask {
                     do {
-                        let r = try await (clip.voiceID.map { v in { try await ElevenLabs.speech(clip.prompt, voice: v) } }
+                        let r = try await (clip.voiceID.map { v in { try await ElevenLabs.speech(clip.prompt, voice: v, settings: voiceSettings) } }
                             ?? { try await ElevenLabs.soundEffect(prompt: clip.prompt, duration: genDuration, influence: influence, loop: loop) })()
                         let file = audio.appendingPathComponent((clip.voiceID == nil ? "gen-" : "voice-") + UUID().uuidString.prefix(8) + "." + r.ext)
                         try r.data.write(to: file)
@@ -721,7 +756,7 @@ final class Store {
     // MARK: Export
 
     func export(_ format: ExportFormat, to url: URL? = nil) async throws -> (url: URL, summary: String) {
-        let out = url ?? subfolder("Exports").appendingPathComponent(format.isFolder ? "\(project.name) \(format.suffix)" : "\(project.name).\(format.suffix).\(format.ext)")
+        let out = url ?? exportsFolder.appendingPathComponent(format.isFolder ? "\(project.name) \(format.suffix)" : "\(project.name).\(format.suffix).\(format.ext)")
         let p = project, folder = self.folder, video = videoURL
         busy = "Exporting \(format.title.lowercased())"
         defer { busy = nil }
