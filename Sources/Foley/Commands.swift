@@ -114,6 +114,8 @@ final class Commands {
               "lfe_send": p("number", "0…1. How much of the track's low end (below 120 Hz) also goes to the sub channel in the 7.1.4 and Atmos exports. Use for thunder, explosions, impacts, heavy landings, deep rumbles; 0.5–1 for the big ones. Leave at 0 for footsteps, voices, light effects and most music."),
               "spatial": p("boolean", "Point source with a room position, or stereo bed."),
               "position": position,
+              "duck_under_voice": p("boolean", "Music tracks only. true = find where someone speaks (on voice-over tracks, and in the film's own sound when it is turned up) and write a Volume lane that dips the music under them. false = remove those dips. Off unless asked for."),
+              "duck_depth_db": p("number", "How far the music dips, 3…18 dB. 9 by default."),
               "index": p("integer", "Moves the track to this place in the track list, 0 = top (the order get_project lists them in). It joins a group when it lands between two tracks of that group, keeps its own group when it lands at that group's edge, and otherwise leaves its group.")],
              required: ["track"]),
         tool("set_automation", "Writes automation on a track. Without from/to it replaces the whole lane; with from and to it replaces only the keyframes inside that time range and leaves the rest, so you can work scene by scene. Pass an empty list to clear. Parameters: volume (dB added to the fader), highCut (Hz, lower = more muffled or further away), lowCut (Hz, higher = thinner, smaller), send (0…1 how much of the scene's space is heard), x (left-right; on stereo-bed tracks this is the pan), y (depth), z (height). Each keyframe's curve says how the value travels to the next one: omit for a straight line, \"hold\" to stay put and jump at the next keyframe (use at cuts), \"smooth\" to ease in and out (use for moves).",
@@ -296,10 +298,10 @@ final class Commands {
             var rest = a
             rest["track"] = id.uuidString
             rest["name"] = nil
-            _ = try updateTrack(rest)
+            _ = try await updateTrack(rest)
             return CommandResult(json: ["ok": true, "track_id": id.uuidString])
         case "update_track":
-            return try updateTrack(a)
+            return try await updateTrack(a)
         case "set_automation":
             let ti = try trackIndex(a)
             guard let param = AutoParam(rawValue: a.str("param") ?? "") else { throw CommandError("Unknown param.") }
@@ -721,7 +723,7 @@ final class Commands {
         }
     }
 
-    private func updateTrack(_ a: [String: Any]) throws -> CommandResult {
+    private func updateTrack(_ a: [String: Any]) async throws -> CommandResult {
         let ti = try trackIndex(a)
         let id = store.project.tracks[ti].id
         var fixed: UUID?
@@ -745,6 +747,12 @@ final class Commands {
                 if let z = pos.num("z") { p.tracks[ti].position.z = min(1, max(0, z)) }
             }
             if let v = a.num("index") { p.moveTrack(id, to: Int(v.rounded())) }
+        }
+        if let on = a.flag("duck_under_voice") {
+            guard store.project.tracks.first(where: { $0.id == id })?.kind == .music else { throw CommandError("duck_under_voice is for music tracks.") }
+            await store.setDucking(id, on: on, depth: a.num("duck_depth_db"))
+        } else if let d = a.num("duck_depth_db"), store.project.tracks.first(where: { $0.id == id })?.duck != nil {
+            await store.setDucking(id, on: true, depth: d)
         }
         guard let now = store.project.trackIndex(id) else { throw CommandError("That track no longer exists.") }
         return CommandResult(json: ["ok": true, "index": now, "track": trackJSON(store.project.tracks[now])])

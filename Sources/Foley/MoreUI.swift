@@ -324,6 +324,50 @@ struct ScoreSection: View {
             .disabled(composing || o.summary.isEmpty)
             Button("Import…") { Panels.importAudio(store, track: track.id) }.buttonStyle(PillButtonStyle())
         }
+
+        SectionTitle("Follow the film")
+        Toggle("Duck under voice", isOn: Binding(get: { track.duck != nil }, set: { v in
+            Task { await store.setDucking(track.id, on: v) }
+        }))
+        .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
+        if let duck = track.duck {
+            Field(title: "Dip", value: String(format: "%.0f dB", duck.depth)) {
+                Slide(value: duck.depth, range: 3...18, reset: 9, begin: { store.beginGesture() }) { v in
+                    // Moves the points that are already there; the timing is not worked out again.
+                    let old = duck.depth
+                    store.live { p in
+                        guard let i = p.trackIndex(track.id) else { return }
+                        p.tracks[i].duck = Duck(depth: v)
+                        let key = AutoParam.volume.rawValue
+                        p.tracks[i].automation[key] = p.tracks[i].automation[key]?.map { k in
+                            var k = k
+                            if abs(k.value + old) < 0.01 { k.value = -v }
+                            return k
+                        }
+                    }
+                }
+            }
+            Button("Listen for voice again") { Task { await store.setDucking(track.id, on: true) } }.buttonStyle(PillButtonStyle())
+        }
+        Caption(track.duck == nil ? "Off: the music plays at one level. On: it finds where someone speaks, on Voice-over tracks and in the film's own sound when that is turned up, and writes a Volume lane that dips under them."
+                                  : "The dips are ordinary points in the Volume lane. Move or delete them as you like; listen again after the voice changes.")
+        Toggle("Sit in each scene's space", isOn: Binding(get: { track.spaceMode == .follow }, set: { v in
+            store.mutate { p in
+                guard let i = p.trackIndex(track.id) else { return }
+                p.tracks[i].spaceMode = v ? .follow : .dry
+                // Music wants far less room than a footstep does.
+                if v, p.tracks[i].send > 0.5 { p.tracks[i].send = 0.3 }
+            }
+        }))
+        .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
+        Caption(track.spaceMode == .follow ? "The music takes a little of each scene's reverb and muffling, like the effects do: it sounds as if it is playing in the room."
+                                           : "Off: the music stays clean over every scene, as a score normally does.")
+        Toggle("Place in the room (spatial)", isOn: Binding(get: { track.spatial }, set: { v in
+            store.mutate { p in if let i = p.trackIndex(track.id) { p.tracks[i].spatial = v } }
+        }))
+        .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
+        Caption(track.spatial ? "The music is one point in the room: place it with the panner under Position, or automate Left–Right, Depth and Height like any effect. It is heard that way in Spatial monitoring and in the binaural, 5.1, 7.1.4 and Atmos exports. Its left and right are folded into that one point."
+                              : "Off: the music stays a normal stereo bed in the front left and right speakers of every format.")
     }
 }
 

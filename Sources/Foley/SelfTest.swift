@@ -236,6 +236,21 @@ enum SelfTest {
             check("IR reverb matches a direct convolution", false, "could not prepare the response")
         }
 
+        // 8. Ducking: two spoken stretches in a recording are found, and the music's volume lane dips under each.
+        var talk = [Float](repeating: 0, count: Int(sr * 10))
+        for (a, b) in [(2.0, 4.0), (6.5, 8.0)] {
+            for i in Int(a * sr)..<Int(b * sr) { talk[i] = Float(0.2 * sin(2 * .pi * 800 * Double(i) / sr) * (0.6 + 0.4 * sin(2 * .pi * 4 * Double(i) / sr))) }
+        }
+        // Rumble all the way through must not count as voice.
+        for i in talk.indices { talk[i] += Float(0.2 * sin(2 * .pi * 50 * Double(i) / sr)) }
+        let spoken = VoiceActivity.regions(left: talk, right: talk)
+        let dips = VoiceActivity.keys(for: spoken, depth: 9, duration: 10)
+        let ok = spoken.count == 2 && abs(spoken[0].lowerBound - 2) < 0.1 && abs(spoken[0].upperBound - 4) < 0.1 && abs(spoken[1].lowerBound - 6.5) < 0.1
+        let at3 = interpolate(dips, at: 3, log: false) ?? 0, at5 = interpolate(dips, at: 5.2, log: false) ?? 0, at9 = interpolate(dips, at: 9.5, log: false) ?? 0
+        check("music ducks under voice", ok && abs(at3 + 9) < 0.01 && abs(at5) < 0.01 && abs(at9) < 0.01,
+              "voice at " + spoken.map { String(format: "%.2f–%.2f s", $0.lowerBound, $0.upperBound) }.joined(separator: ", ")
+              + String(format: "; music %.1f dB under it, %.1f dB between, %.1f dB after", at3, at5, at9))
+
         // 5. Loudness: 997 Hz at -23 dBFS in both channels reads -23 LUFS, and silence afterwards does not pull it down.
         let meter = LoudnessAnalyzer()
         var last = LoudnessAnalyzer.Reading()

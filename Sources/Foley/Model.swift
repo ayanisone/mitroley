@@ -341,6 +341,7 @@ struct Track: Codable, Equatable, Identifiable {
     var lane: AutoParam?            // automation lane shown under the track
     var groupID: UUID?              // the group this track belongs to, if any
     var height: Double?             // lane height in points, nil = standard
+    var duck: Duck?                 // music only: dips under voice; nil = off
     var lfe: Double?                // 0…1 how much of the track's low end also goes to the sub (immersive exports)
 
     func keys(_ p: AutoParam) -> [Keyframe] { automation[p.rawValue] ?? [] }
