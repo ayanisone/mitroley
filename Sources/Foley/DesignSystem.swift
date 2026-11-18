@@ -279,6 +279,8 @@ struct QuietEditor: View {
     let placeholder: String
     @Binding var text: String
     var height: CGFloat = 64
+    /// When set, Return calls this instead of starting a new line; Shift-Return or Option-Return still makes one.
+    var onSubmit: (() -> Void)?
     @FocusState private var focused: Bool
 
     // A multi-line text field rather than a text view: the system then draws the hint, the caret and the
@@ -289,6 +291,11 @@ struct QuietEditor: View {
             .font(.system(size: 13))
             .lineLimit(1...10)
             .focused($focused)
+            .onKeyPress(.return, phases: .down) { press in
+                guard let onSubmit, !press.modifiers.contains(.shift), !press.modifiers.contains(.option) else { return .ignored }
+                onSubmit()
+                return .handled
+            }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, minHeight: height, alignment: .leading)

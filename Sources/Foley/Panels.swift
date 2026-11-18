@@ -69,7 +69,9 @@ struct ClaudePanel: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                QuietEditor(placeholder: "Tell Claude what to do with the sound", text: $input, height: 62)
+                QuietEditor(placeholder: "Tell Claude what to do with the sound", text: $input, height: 62) {
+                    if !agent.running, !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { send(input) }
+                }
                 HStack {
                     if agent.running {
                         Button("Stop") { agent.stop() }.buttonStyle(PillButtonStyle())
@@ -80,7 +82,7 @@ struct ClaudePanel: View {
                             .keyboardShortcut(.return, modifiers: .command)
                     }
                     Spacer()
-                    Text("Every change can be undone").font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+                    Text("Return to send · Shift-Return for a new line").font(.system(size: 11)).foregroundStyle(Theme.tertiary)
                 }
             }
             .padding(16)
