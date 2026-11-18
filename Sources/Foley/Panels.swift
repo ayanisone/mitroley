@@ -86,15 +86,16 @@ struct ClaudePanel: View {
                         Menu {
                             Section("Effort") {
                                 ForEach([("low", "Low", "Fastest and cheapest. Small, clear jobs"), ("medium", "Medium", "A balance"), ("high", "High", "Thinks longest. Best for fitting a whole film")], id: \.0) { e in
-                                    Button { effort = e.0 } label: {
-                                        Text(effort == e.0 ? "✓ \(e.1)" : "    \(e.1)")
+                                    // A toggle, so the system draws the tick in its own column and the two lines stay aligned.
+                                    Toggle(isOn: Binding(get: { effort == e.0 }, set: { if $0 { effort = e.0 } })) {
+                                        Text(e.1)
                                         Text(e.2)
                                     }
                                 }
                             }
                             Section("Model") {
                                 ForEach([("claude-opus-5-5", "Claude Opus 5.5"), ("claude-fable-5-2", "Claude Fable 5.2"), ("claude-sonnet-5-5", "Claude Sonnet 5.5")], id: \.0) { m in
-                                    Button(model == m.0 ? "✓ \(m.1)" : "    \(m.1)") { model = m.0 }
+                                    Toggle(m.1, isOn: Binding(get: { model == m.0 }, set: { if $0 { model = m.0 } }))
                                 }
                             }
                         } label: {

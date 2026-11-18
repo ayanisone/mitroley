@@ -314,8 +314,8 @@ struct TransportBar: View {
             Rectangle().fill(Theme.line).frame(width: 1, height: 20)
             Menu {
                 ForEach(MixFormat.allCases) { f in
-                    Button { store.setFormat(f) } label: {
-                        Text(f == store.project.format ? "✓ \(f.title)" : "    \(f.title)")
+                    Toggle(isOn: Binding(get: { f == store.project.format }, set: { if $0 { store.setFormat(f) } })) {
+                        Text(f.title)
                         Text(f.detail)
                     }
                 }
