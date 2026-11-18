@@ -326,7 +326,7 @@ final class MixGraph {
         for (i, tr) in p.tracks.enumerated() where i < tracks.count {
             var prepared: [PreparedClip] = []
             var keep: [AVAudioPCMBuffer] = []
-            for c in tr.clips {
+            for c in tr.clips where c.muted != true {
                 guard let take = c.take, let url = resolve(take), let buf = AudioCache.shared.buffer(url),
                       let ch = buf.floatChannelData, buf.frameLength > 0, c.duration > 0 else { continue }
                 let length = Int64(c.duration * sr)

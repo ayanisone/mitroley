@@ -175,7 +175,19 @@ enum Keys {
             if NSApp.keyWindow?.attachedSheet != nil { return event }
             let mods = event.modifierFlags.intersection([.command, .option, .control])
             guard mods.isEmpty else { return event }
+            // One key picks a tool.
+            if !event.modifierFlags.contains(.shift), let ch = event.charactersIgnoringModifiers?.lowercased().first,
+               let t = Tool.allCases.first(where: { $0.key == ch }), !(ch == "t") {
+                store.tool = t
+                return nil
+            }
             switch event.keyCode {
+            case 53 where store.marquee != nil: // esc: let go of the marquee
+                store.marquee = nil
+                return nil
+            case 51, 117 where store.marquee != nil: // delete: take the marquee's stretch out
+                store.deleteMarquee()
+                return nil
             case 49: // space; while a take is auditioning it only stops that
                 if store.auditioning != nil { store.stopAudition() } else { store.player.toggle() }
                 return nil

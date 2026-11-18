@@ -251,6 +251,19 @@ enum SelfTest {
               "voice at " + spoken.map { String(format: "%.2f–%.2f s", $0.lowerBound, $0.upperBound) }.joined(separator: ", ")
               + String(format: "; music %.1f dB under it, %.1f dB between, %.1f dB after", at3, at5, at9))
 
+        // 9. Marquee delete: taking 2…3 s out of a 0…5 s clip leaves 0…2 and 3…5, the second starting 3 s into the sound.
+        var lane = Track(name: "t", kind: .fx)
+        lane.clips = [Clip(name: "long", start: 0, duration: 5, takes: [Take(file: "x", duration: 5)]),
+                      Clip(name: "inside", start: 2.2, duration: 0.5, takes: [Take(file: "y", duration: 1)]),
+                      Clip(name: "later", start: 6, duration: 1, takes: [Take(file: "z", duration: 1)])]
+        lane.remove(from: 2, to: 3)
+        let parts = lane.clips.sorted { $0.start < $1.start }
+        let good = parts.count == 3 && parts[0].name == "long" && abs(parts[0].duration - 2) < 1e-9
+            && abs(parts[1].start - 3) < 1e-9 && abs(parts[1].duration - 2) < 1e-9 && abs(parts[1].offset - 3) < 1e-9
+            && parts[2].name == "later" && parts[1].id != parts[0].id
+        check("marquee delete cuts a stretch out", good,
+              parts.map { String(format: "%@ %.1f–%.1f (from %.1f s)", $0.name, $0.start, $0.end, $0.offset) }.joined(separator: ", "))
+
         // 5. Loudness: 997 Hz at -23 dBFS in both channels reads -23 LUFS, and silence afterwards does not pull it down.
         let meter = LoudnessAnalyzer()
         var last = LoudnessAnalyzer.Reading()

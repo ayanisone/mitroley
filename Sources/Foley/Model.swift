@@ -202,6 +202,7 @@ struct Clip: Codable, Equatable, Identifiable {
     var error: String?
     var voiceID: String?        // set on spoken lines: the ElevenLabs voice that says `prompt`
     var voiceName: String?
+    var muted: Bool?            // silenced with the mute tool; nil = plays
     var rate: Double?           // playback speed: 0.5 = half speed and an octave down, 2 = double. nil = 1
     var fadeInShape: FadeShape?     // nil = equal power
     var fadeOutShape: FadeShape?

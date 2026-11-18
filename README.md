@@ -61,6 +61,7 @@ Two ways in, both using the same commands (`Sources/Foley/Commands.swift`):
 | Loudness meter | BS.1770-4 momentary, short-term and integrated loudness and true peak of what is playing, and "Measure full mix" for the 7.1.4, 5.1, stereo fold-down and laptop-and-phone versions. |
 | IR reverb | In a space's panel, switch Room to "IR reverb" and load an impulse response (a recording of a real room). It replaces the built-in reverb for that space, live and in exports. Up to six seconds. |
 | Music follows the film | On a music track, three switches, all off by default: duck under voice (finds where someone speaks and writes a Volume lane that dips under it), sit in each scene's space, and place in the room as a spatial object. |
+| Tools | One key each: V pointer, C scissors, M mute, S solo, R marquee, G gain, F fade. The strip is in the timeline's top-left corner. |
 | Track order | Drag a track's name up or down, or ⌥⌘↑ / ⌥⌘↓. |
 
 ## Export

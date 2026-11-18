@@ -176,7 +176,10 @@ struct TimelineCorner: View {
                 .help("Grid lines, grid size, zoom and track height")
             }
             .padding(.horizontal, 12)
-            .frame(height: Metrics.ruler + Metrics.film)
+            .frame(height: 34)
+            ToolStrip()
+                .padding(.horizontal, 12)
+                .frame(height: Metrics.ruler + Metrics.film - 34, alignment: .top)
             HStack {
                 Text("SCENES").font(.system(size: 10, weight: .semibold)).tracking(0.8).foregroundStyle(Theme.tertiary)
                 Spacer()
@@ -778,10 +781,25 @@ struct TrackLane: View {
             Rectangle()
                 .fill(targeted || store.dropTrack == track.id ? track.kind.color.opacity(0.12) : (store.selection == .track(track.id) ? Color.white.opacity(0.045) : Theme.lane))
                 .contentShape(Rectangle())
-                .gesture(SpatialTapGesture().onEnded { g in
-                    store.selection = .track(track.id)
-                    store.player.seek(Double(g.location.x) / pps)
-                })
+                .gesture(DragGesture(minimumDistance: 0)
+                    .onChanged { g in
+                        guard store.tool == .marquee else { return }
+                        let limit = store.project.duration
+                        store.marquee = Marquee(track: track.id, start: min(limit, max(0, Double(g.startLocation.x) / pps)),
+                                                end: min(limit, max(0, Double(g.location.x) / pps)))
+                    }
+                    .onEnded { g in
+                        switch store.tool {
+                        case .marquee:
+                            if abs(g.translation.width) < 3 { store.marquee = nil }
+                        case .mute: store.toggleTrack(track.id, solo: false)
+                        case .solo: store.toggleTrack(track.id, solo: true)
+                        default:
+                            guard abs(g.translation.width) < 4, abs(g.translation.height) < 4 else { return }
+                            store.selection = .track(track.id)
+                            store.player.seek(Double(g.location.x) / pps)
+                        }
+                    })
             // Scene boundaries carried down as guides.
             SlicedCanvas(start: 0, width: CGFloat(store.project.duration * pps) + 24) { ctx, size, _ in
                 if store.showSceneGrid {
@@ -801,6 +819,14 @@ struct TrackLane: View {
             }
             ForEach(track.crossfades()) { x in
                 CrossfadeView(fade: x, track: track, pps: pps)
+            }
+            if let m = store.marquee, m.track == track.id {
+                let a = min(m.start, m.end), b = max(m.start, m.end)
+                Rectangle().fill(Color.white.opacity(0.16))
+                    .overlay(Rectangle().strokeBorder(Color.white.opacity(0.8), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                    .frame(width: max(1, CGFloat((b - a) * pps)))
+                    .offset(x: CGFloat(a * pps))
+                    .allowsHitTesting(false)
             }
         }
         .frame(height: store.rowHeight(track))
@@ -924,7 +950,7 @@ struct ClipView: View {
     let track: Track
     let pps: Double
 
-    private enum Mode { case move, left, right, fadeIn, fadeOut }
+    private enum Mode { case move, left, right, fadeIn, fadeOut, gain, tool }
     @State private var origin: Clip?
     @State private var mode = Mode.move
     @State private var moved = false
@@ -992,6 +1018,15 @@ struct ClipView: View {
             }
         }
         .frame(width: width, height: height)
+        .opacity(clip.muted == true ? 0.32 : 1)
+        .overlay(alignment: .topTrailing) {
+            if clip.muted == true {
+                Image(systemName: "speaker.slash.fill").font(.system(size: 9, weight: .bold)).foregroundStyle(.white.opacity(0.9)).padding(4)
+            } else if store.tool == .gain, selected, abs(clip.gain) > 0.01 || origin != nil {
+                Text(String(format: "%+.1f dB", clip.gain)).font(.system(size: 9.5, weight: .bold).monospacedDigit())
+                    .padding(.horizontal, 5).padding(.vertical, 2).background(Color.black.opacity(0.55), in: Capsule()).padding(3)
+            }
+        }
         .contentShape(Rectangle())
         .gesture(drag)
         .onContinuousHover { phase in
@@ -1017,6 +1052,7 @@ struct ClipView: View {
             Button("Duplicate") { store.selection = .clip(clip.id); store.duplicateClip() }
             // Not disabled by the playhead's position: reading it here would redraw every clip on every frame of playback.
             Button("Split at Playhead") { store.splitClip(clip.id) }
+            Button(clip.muted == true ? "Unmute Clip" : "Mute Clip") { store.toggleClipMute(clip.id) }
             Button("Download Sound…") { store.downloadClipAsking(clip.id) }.disabled(clip.take == nil)
             Button("Crossfade with Neighbour") { store.crossfade(clip.id) }
                 .disabled(track.crossfadePartner(of: clip.id) == nil)
@@ -1076,17 +1112,50 @@ struct ClipView: View {
                     snapped = nil
                     store.selection = .clip(clip.id)
                     let x = g.startLocation.x - CGFloat(clip.start * pps), y = g.startLocation.y - laneTop() - 4
-                    cut = NSEvent.modifierFlags.contains(.command) ? clip.start + Double(x) / pps : nil
-                    if let m = fadeHandle(at: x, y) { mode = m }
-                    else if x < 7 { mode = .left }
-                    else if x > width - 7 { mode = .right }
-                    else { mode = .move }
+                    cut = NSEvent.modifierFlags.contains(.command) || store.tool == .scissors ? clip.start + Double(x) / pps : nil
+                    switch store.tool {
+                    case .pointer:
+                        if let m = fadeHandle(at: x, y) { mode = m }
+                        else if x < 7 { mode = .left }
+                        else if x > width - 7 { mode = .right }
+                        else { mode = .move }
+                    case .gain: mode = .gain
+                    case .fade: mode = x < width / 2 ? .fadeIn : .fadeOut
+                    case .scissors, .mute, .solo, .marquee: mode = .tool
+                    }
                 }
                 guard let o = origin else { return }
+                if store.tool == .marquee {
+                    // Over a clip the marquee still selects time on the track.
+                    let limit = store.project.duration
+                    store.marquee = Marquee(track: track.id, start: min(limit, max(0, Double(g.startLocation.x) / pps)),
+                                            end: min(limit, max(0, Double(g.location.x) / pps)))
+                    return
+                }
+                if mode == .tool { return }
                 if !moved {
-                    guard abs(g.translation.width) > 2 else { return }
+                    guard abs(mode == .gain ? g.translation.height : g.translation.width) > 2 else { return }
                     moved = true
                     store.beginGesture()
+                }
+                if mode == .gain {
+                    // Up is louder: 1 dB for every 4 points.
+                    let db = min(24, max(-48, o.gain - Double(g.translation.height) / 4))
+                    store.live { p in
+                        guard let l = p.locate(clip: clip.id) else { return }
+                        p.tracks[l.track].clips[l.clip].gain = (db * 2).rounded() / 2
+                    }
+                    return
+                }
+                if store.tool == .fade {
+                    // The fade ends (or begins) where the pointer is.
+                    let at = Double(g.location.x) / pps
+                    store.live { p in
+                        guard let l = p.locate(clip: clip.id) else { return }
+                        if mode == .fadeIn { p.tracks[l.track].clips[l.clip].fadeIn = min(o.duration - o.fadeOut, max(0, at - o.start)) }
+                        else { p.tracks[l.track].clips[l.clip].fadeOut = min(o.duration - o.fadeIn, max(0, o.end - at)) }
+                    }
+                    return
                 }
                 let dt = Double(g.translation.width) / pps
                 let source = o.take?.duration ?? o.duration
@@ -1116,6 +1185,8 @@ struct ClipView: View {
                         c.fadeIn = min(o.duration - o.fadeOut, max(0, o.fadeIn + dt))
                     case .fadeOut:
                         c.fadeOut = min(o.duration - o.fadeIn, max(0, o.fadeOut - dt))
+                    case .gain, .tool:
+                        break
                     }
                     p.tracks[l.track].clips[l.clip] = c
                 }
@@ -1125,6 +1196,11 @@ struct ClipView: View {
                 // ⌘-click without dragging cuts the clip right there.
                 if let cut, !moved { store.splitClip(clip.id, at: cut) }
                 cut = nil
+                if !moved {
+                    if store.tool == .mute { store.toggleClipMute(clip.id) }
+                    if store.tool == .solo { store.toggleTrack(track.id, solo: true) }
+                }
+                if store.tool == .marquee, let m = store.marquee, abs(m.end - m.start) * pps < 3 { store.marquee = nil }
                 // Dropped on another track: the clip moves there.
                 if mode == .move, moved, let to = store.dropTrack, to != track.id {
                     store.live { p in

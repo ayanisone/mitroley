@@ -46,6 +46,11 @@ final class Store {
         }
     }
     var zoom = 1.0
+    /// What a click or drag on the timeline does.
+    var tool = Tool.pointer {
+        didSet { if tool != .marquee { marquee = nil } }
+    }
+    var marquee: Marquee?
     /// The pinch in progress. Its own object, so stretching the timeline does not touch anything that follows the store.
     @ObservationIgnored let zoomLive = ZoomLive()
     /// Set by the timeline: scrolls it to an x offset. Used by the hidden scroll benchmark.
