@@ -201,6 +201,12 @@ struct VideoPane: View {
         .overlay(alignment: .bottom) {
             TransportBar().padding(.bottom, Self.gap)
         }
+        // The editing tools: a column at the left of the picture, level with its middle.
+        .overlay(alignment: .leading) {
+            ToolStrip()
+                .padding(.leading, 14)
+                .padding(.bottom, TransportBar.height + Self.gap)
+        }
         .overlay(alignment: .topTrailing) {
             // Cues that were planned but have no sound yet.
             let missing = store.missingCues.count

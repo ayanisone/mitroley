@@ -171,6 +171,11 @@ final class Store {
     }
 
     private func changed() {
+        // The engine is about to be rebuilt (a track, space or plug-in came or went): keep what the open plug-ins are set to.
+        if MixGraph.signature(project) != player.graph.signature {
+            capturePluginStates()
+            PluginWindows.closeAll()
+        }
         player.sync(project, resolve: { [folder] in Store.url(for: $0, in: folder) })
         saveWork?.cancel()
         dirty = true
@@ -218,6 +223,7 @@ final class Store {
     func save() {
         saveWork?.cancel()
         guard ready else { return }
+        capturePluginStates()
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
         guard let data = try? enc.encode(project) else { return }
@@ -762,6 +768,7 @@ final class Store {
 
     func export(_ format: ExportFormat, to url: URL? = nil) async throws -> (url: URL, summary: String) {
         let out = url ?? exportsFolder.appendingPathComponent(format.isFolder ? "\(project.name) \(format.suffix)" : "\(project.name).\(format.suffix).\(format.ext)")
+        capturePluginStates()
         let p = project, folder = self.folder, video = videoURL
         busy = "Exporting \(format.title.lowercased())"
         defer { busy = nil }

@@ -176,10 +176,7 @@ struct TimelineCorner: View {
                 .help("Grid lines, grid size, zoom and track height")
             }
             .padding(.horizontal, 12)
-            .frame(height: 34)
-            ToolStrip()
-                .padding(.horizontal, 12)
-                .frame(height: Metrics.ruler + Metrics.film - 34, alignment: .top)
+            .frame(height: Metrics.ruler + Metrics.film)
             HStack {
                 Text("SCENES").font(.system(size: 10, weight: .semibold)).tracking(0.8).foregroundStyle(Theme.tertiary)
                 Spacer()

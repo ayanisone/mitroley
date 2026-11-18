@@ -115,24 +115,26 @@ extension Store {
     }
 }
 
-/// The row of tools in the timeline's corner.
+/// The tools, as a column floating at the left of the picture, where there is room around it.
 struct ToolStrip: View {
     @Environment(Store.self) private var store
     var body: some View {
-        HStack(spacing: 2) {
+        VStack(spacing: 4) {
             ForEach(Tool.allCases) { t in
                 let on = store.tool == t
                 Button { store.tool = t } label: {
                     Image(systemName: t.symbol)
-                        .font(.system(size: 10.5, weight: .semibold))
+                        .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(on ? Color.black.opacity(0.85) : Theme.secondary)
-                        .frame(width: 25, height: 21)
-                        .background(on ? Theme.accent : Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        .contentShape(Rectangle())
+                        .frame(width: 32, height: 32)
+                        .background(on ? Theme.accent : Color.clear, in: Circle())
+                        .contentShape(Circle())
                 }
                 .buttonStyle(PressStyle(scale: 0.9))
                 .help(t.help)
             }
         }
+        .padding(6)
+        .glass(in: Capsule())
     }
 }

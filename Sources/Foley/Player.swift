@@ -82,6 +82,7 @@ final class Player {
         self.resolve = resolve
         graph.rebuildIfNeeded(p)
         graph.configureSpaces(p)
+        graph.configurePlugins(p)
         graph.loadClips(p, resolve: resolve)
         graph.bus?.set(p.bus)
         startEngine()

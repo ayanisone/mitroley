@@ -355,6 +355,8 @@ struct TrackPanel: View {
         Field(title: "Muffle", value: AutoParam.highCut.format(track.highCut)) { slide(\.highCut, 200...20000, log: true, reset: 20000) }
         Field(title: "Low cut", value: track.lowCut <= 25 ? "Off" : String(format: "%.0f Hz", track.lowCut)) { slide(\.lowCut, 20...2000, log: true, reset: 20) }
 
+        PluginSection(track: track)
+
         SectionTitle("Position")
         Toggle("Spatial object", isOn: Binding(get: { track.spatial }, set: { v in commit { $0.spatial = v } }))
             .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))

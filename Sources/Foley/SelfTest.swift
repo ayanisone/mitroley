@@ -113,6 +113,22 @@ enum SelfTest {
             check("IR reverb runs in the engine", rms(withIR.l, 1, 6) > 0.0005 && diff > 1,
                   String(format: "reverb return %.5f with the response, %.5f built-in", rms(withIR.l, 1, 6), rms(builtIn.l, 1, 6)))
 
+            // Audio Unit on a track: Apple's low-pass in the chain takes the top off white noise in an offline render.
+            var plug = Project()
+            plug.duration = 3
+            var hiss = Track(name: "Hiss", kind: .fx)
+            hiss.spaceMode = .dry
+            hiss.clips = [Clip(name: "noise", start: 0, duration: 2.5, takes: [Take(file: noise.path, duration: noiseDur)])]
+            plug.tracks = [hiss]
+            let plain = try Exporter.render(plug, mode: .stereo, tail: 0, resolve: resolve)
+            plug.tracks[0].plugins = [PluginSlot(name: "AULowpass", maker: "Apple", type: kAudioUnitType_Effect, subtype: kAudioUnitSubType_LowPassFilter, manufacturer: kAudioUnitManufacturer_Apple)]
+            let filtered = try Exporter.render(plug, mode: .stereo, tail: 0, resolve: resolve)
+            plug.tracks[0].plugins?[0].bypass = true
+            let bypassed = try Exporter.render(plug, mode: .stereo, tail: 0, resolve: resolve)
+            let r0 = rms(plain.l, 0.5, 2), r1 = rms(filtered.l, 0.5, 2), r2 = rms(bypassed.l, 0.5, 2)
+            check("Audio Unit runs on a track", r0 > 0.01 && r1 < r0 * 0.9 && abs(r2 - r0) < r0 * 0.02,
+                  String(format: "noise level %.4f plain, %.4f through Apple's low-pass, %.4f bypassed", r0, r1, r2))
+
             // 9. Fold-downs of the 7.1.4 mix, on synthetic channels.
             downmixChecks(check)
             busChecks(check)

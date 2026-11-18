@@ -158,6 +158,8 @@ final class MixGraph {
         let dryStereo: AVAudioMixerNode
         let dryMono: AVAudioMixerNode
         var sends: [UUID: AVAudioMixerNode]
+        /// The track's Audio Unit effects, in order.
+        var plugins: [(id: UUID, unit: AVAudioUnit)] = []
     }
     final class SpaceNodes {
         let id: UUID
@@ -184,7 +186,7 @@ final class MixGraph {
     private(set) var bus: BusProcessor?
     /// Where the output meters listen: after the master bus.
     private(set) var meterNode: AVAudioNode!
-    private var signature = ""
+    private(set) var signature = ""
     let offline: Bool
     private let stereo = AudioCache.format
     private let mono = AVAudioFormat(standardFormatWithSampleRate: AudioCache.sampleRate, channels: 1)!
@@ -225,7 +227,7 @@ final class MixGraph {
     }
 
     static func signature(_ p: Project) -> String {
-        p.tracks.map(\.id.uuidString).joined(separator: ",") + "|" + p.spaces.map { $0.id.uuidString + ($0.ir.map { "/" + $0 } ?? "") }.joined(separator: ",")
+        p.tracks.map { $0.id.uuidString + ($0.plugins ?? []).map { "+" + $0.id.uuidString }.joined() }.joined(separator: ",") + "|" + p.spaces.map { $0.id.uuidString + ($0.ir.map { "/" + $0 } ?? "") }.joined(separator: ",")
     }
 
     /// Rebuilds nodes when tracks or spaces were added or removed. Returns true if it rebuilt.
@@ -238,6 +240,7 @@ final class MixGraph {
         for t in tracks {
             for n in [t.source, t.eq, t.dryStereo, t.dryMono] as [AVAudioNode] { engine.detach(n) }
             for s in t.sends.values { engine.detach(s) }
+            for p in t.plugins { engine.detach(p.unit) }
         }
         for s in spaces {
             for n in [s.input, s.delay, s.reverb, s.eq] as [AVAudioNode] { engine.detach(n) }
@@ -298,7 +301,17 @@ final class MixGraph {
                 points.append(AVAudioConnectionPoint(node: send, bus: 0))
             }
             engine.connect(source, to: eq, format: stereo)
-            engine.connect(eq, to: points, fromBus: 0, format: stereo)
+            // The track's plug-ins sit after its filters and before everything it feeds (dry, object, spaces).
+            var last: AVAudioNode = eq
+            var plugins: [(id: UUID, unit: AVAudioUnit)] = []
+            for slot in tr.plugins ?? [] {
+                guard let unit = Plugins.make(slot) else { continue }
+                engine.attach(unit)
+                engine.connect(last, to: unit, format: stereo)
+                last = unit
+                plugins.append((slot.id, unit))
+            }
+            engine.connect(last, to: points, fromBus: 0, format: stereo)
             engine.connect(dryStereo, to: engine.mainMixerNode, format: stereo)
             engine.connect(dryMono, to: environment, format: mono)
             dryMono.renderingAlgorithm = offline ? .HRTFHQ : .auto
@@ -308,7 +321,7 @@ final class MixGraph {
                 engine.connect(send, to: sp.input, format: stereo)
                 send.outputVolume = 0
             }
-            tracks.append(TrackNodes(id: tr.id, source: source, renderer: renderer, eq: eq, dryStereo: dryStereo, dryMono: dryMono, sends: sends))
+            tracks.append(TrackNodes(id: tr.id, source: source, renderer: renderer, eq: eq, dryStereo: dryStereo, dryMono: dryMono, sends: sends, plugins: plugins))
         }
         signature = sig
         if wasRunning { try? engine.start() }
@@ -341,6 +354,15 @@ final class MixGraph {
                 keep.append(buf)
             }
             tracks[i].renderer.set(prepared, buffers: keep)
+        }
+    }
+
+    func configurePlugins(_ p: Project) {
+        for nodes in tracks {
+            guard let slots = p.tracks.first(where: { $0.id == nodes.id })?.plugins else { continue }
+            for (id, unit) in nodes.plugins {
+                if let s = slots.first(where: { $0.id == id }), unit.auAudioUnit.shouldBypassEffect != s.bypass { unit.auAudioUnit.shouldBypassEffect = s.bypass }
+            }
         }
     }
 
