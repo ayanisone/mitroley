@@ -7,20 +7,25 @@ struct TimelineView: View {
     @State private var pinch: (zoom: Double, vzoom: Double, time: Double, x: CGFloat, vertical: Bool, base: CGFloat)?
     private var live: ZoomLive { store.zoomLive }
     @State private var settle: Task<Void, Never>?
+    @State private var fitWidth: CGFloat = 0
+    @State private var refit: Task<Void, Never>?
     @State private var lastHeight = 0.0
 
     var body: some View {
         GeometryReader { geo in
             let visible = max(300, geo.size.width - Metrics.header - 1)
             let duration = max(1, store.project.duration)
-            let pps = Double(visible - 24) / duration * store.zoom
+            // The timeline is scaled to the width it last settled at, not the width of this instant: while the window or
+            // the side panel is being resized it keeps its scale, and is fitted once when the resizing stops.
+            let fit = fitWidth > 0 ? fitWidth : visible
+            let pps = Double(fit - 24) / duration * store.zoom
             let contentWidth = CGFloat(store.project.duration * pps) + 24
             let pinned = Metrics.ruler + Metrics.film + Metrics.scene
             let rows = store.project.rows.count + store.project.tracks.reduce(0) { $0 + ($1.lane == nil ? 0 : 1) }
             ZStack(alignment: .topLeading) {
                 // One native scroll view for both directions. The ruler strip and the track names float in it.
                 TimelineHost(store: store, scroll: scroll, pps: pps, contentWidth: contentWidth) { total, x, option, ended in
-                    pinched(total: total, at: x, option: option, ended: ended, pps: pps, visible: visible, duration: duration)
+                    pinched(total: total, at: x, option: option, ended: ended, pps: pps, visible: fit, duration: duration)
                 }
                 .clipped()
                 TimelineCorner()
@@ -37,7 +42,15 @@ struct TimelineView: View {
                     .clipped()
                     .padding(.leading, Metrics.header + 1)
             }
-            .onChange(of: visible, initial: true) { _, v in scroll.width = v }
+            .onChange(of: visible, initial: true) { _, v in
+                scroll.width = v
+                if fitWidth == 0 { fitWidth = v; return }
+                refit?.cancel()
+                refit = Task {
+                    try? await Task.sleep(nanoseconds: 180_000_000)
+                    if !Task.isCancelled { fitWidth = v }
+                }
+            }
         }
         .environment(scroll)
         .environment(live)

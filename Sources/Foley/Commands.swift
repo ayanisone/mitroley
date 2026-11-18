@@ -509,6 +509,30 @@ final class Commands {
                                         "doc": [doc.frame.width, doc.frame.height],
                                         "fitting": [doc.intrinsicContentSize.width, doc.intrinsicContentSize.height],
                                         "floating": sv.subviews.map { String(describing: type(of: $0)) }])
+        case "debug_resize":
+            // Not listed as a tool: resizes the main window back and forth and reports how often the main thread got a turn.
+            guard let w = NSApp.windows.first(where: { $0.isVisible && $0.styleMask.contains(.titled) && !($0 is NSPanel) && $0.frame.width > 900 }) else {
+                return CommandResult(json: ["found": false])
+            }
+            let seconds = a.num("seconds") ?? 4
+            let home = w.frame
+            let start = CACurrentMediaTime()
+            var last = start, worst = 0.0, steps = 0, slow = 0
+            while CACurrentMediaTime() - start < seconds {
+                let u = (CACurrentMediaTime() - start) / seconds
+                let k = CGFloat(0.5 - 0.5 * cos(u * 2 * .pi))
+                var f = home
+                f.size.width = home.width - 260 * k
+                f.size.height = home.height - 160 * k
+                f.origin.y = home.maxY - f.size.height
+                w.setFrame(f, display: true)
+                try await Task.sleep(nanoseconds: 4_000_000)
+                let now = CACurrentMediaTime()
+                if now - last > 0.02 { slow += 1 }
+                worst = max(worst, now - last); last = now; steps += 1
+            }
+            w.setFrame(home, display: true)
+            return CommandResult(json: ["steps": steps, "per_second": Double(steps) / seconds, "worst_ms": worst * 1000, "steps_over_20ms": slow])
         case "debug_scroll":
             // Not listed as a tool: zooms in, scrolls the timeline sideways for a few seconds and reports how often the main thread got a turn.
             let seconds = a.num("seconds") ?? 5

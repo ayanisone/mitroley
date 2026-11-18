@@ -102,8 +102,12 @@ struct TimelineHost: NSViewRepresentable {
         weak var view: TimelineScrollView?
         var scroll: TimelineScroll?
         var contentWidth: CGFloat = 0
+        var pps = 0.0
         var pending: CGPoint?
         var laying = false
+        var stale = true
+        var lanesHeight: CGFloat = 0
+        var headersHeight: CGFloat = 0
         var started = false
 
         @objc func boundsChanged(_ n: Notification) {
@@ -122,15 +126,21 @@ struct TimelineHost: NSViewRepresentable {
             let pinnedHeight = Metrics.ruler + Metrics.film + Metrics.scene
             let side = Metrics.header + 1
             let viewport = v.contentView.bounds.size
-            let width = max(viewport.width, side + contentWidth)
-            let lanesHeight = lanes.intrinsicContentSize.height
-            let headersHeight = headers.intrinsicContentSize.height
-            let height = max(viewport.height, lanesHeight, pinnedHeight + headersHeight)
+            // Asking SwiftUI how tall everything is means measuring every row; only done when rows may have changed.
+            if stale {
+                stale = false
+                lanesHeight = lanes.intrinsicContentSize.height
+                headersHeight = headers.intrinsicContentSize.height
+            }
+            // The document is as big as the timeline, whatever the window is doing: resizing the window then moves
+            // nothing inside it.
+            let width = side + contentWidth
+            let height = max(lanesHeight, pinnedHeight + headersHeight)
             let doc = NSRect(x: 0, y: 0, width: width, height: height)
             if lanes.frame != doc { lanes.frame = doc }
             let hf = NSRect(x: headers.frame.origin.x, y: pinnedHeight, width: side, height: height - pinnedHeight)
             if headers.frame.size != hf.size || headers.frame.origin.y != hf.origin.y { headers.frame = hf }
-            let pf = NSRect(x: side, y: pinned.frame.origin.y, width: max(contentWidth, viewport.width - side), height: pinnedHeight)
+            let pf = NSRect(x: side, y: pinned.frame.origin.y, width: contentWidth, height: pinnedHeight)
             if pinned.frame.size != pf.size || pinned.frame.origin.x != pf.origin.x { pinned.frame = pf }
             if !started, viewport.height > 0 {
                 started = true
@@ -165,7 +175,8 @@ struct TimelineHost: NSViewRepresentable {
         v.hasVerticalScroller = true
         v.autohidesScrollers = true
         v.scrollerStyle = .overlay
-        v.drawsBackground = false
+        v.drawsBackground = true
+        v.backgroundColor = NSColor(Theme.panel)
         v.allowsMagnification = false
         v.usesPredominantAxisScrolling = false
         // Views do not clip by default; without this the floating track names show outside the timeline.
@@ -187,6 +198,7 @@ struct TimelineHost: NSViewRepresentable {
         c.view = v
         c.scroll = scroll
         c.contentWidth = contentWidth
+        c.pps = pps
         v.contentView.postsBoundsChangedNotifications = true
         v.contentView.postsFrameChangedNotifications = true
         NotificationCenter.default.addObserver(c, selector: #selector(Coordinator.boundsChanged(_:)),
@@ -199,19 +211,29 @@ struct TimelineHost: NSViewRepresentable {
             c?.pending = p
             c?.scrollTo(p)
         }
-        store.relayoutTimeline = { [weak c] in DispatchQueue.main.async { c?.layout() } }
+        store.relayoutTimeline = { [weak c] in DispatchQueue.main.async { c?.stale = true; c?.layout() } }
         DispatchQueue.main.async { c.layout() }
         return v
     }
 
+    /// Takes whatever space it is offered. Without this SwiftUI asks the scroll view for its fitting size on every layout pass.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: TimelineScrollView, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 800, height: proposal.height ?? 400)
+    }
+
     func updateNSView(_ v: TimelineScrollView, context: Context) {
         let c = context.coordinator
-        c.lanes.rootView = wrap(LanesRoot(pps: pps, contentWidth: contentWidth))
-        c.pinned.rootView = wrap(PinnedRoot(pps: pps, contentWidth: contentWidth))
-        c.contentWidth = contentWidth
+        // Only when the scale has changed: handing SwiftUI a new root re-lays-out every clip.
+        if c.pps != pps || c.contentWidth != contentWidth {
+            c.lanes.rootView = wrap(LanesRoot(pps: pps, contentWidth: contentWidth))
+            c.pinned.rootView = wrap(PinnedRoot(pps: pps, contentWidth: contentWidth))
+            c.pps = pps
+            c.contentWidth = contentWidth
+            c.stale = true
+        }
         v.onPinch = onPinch
         c.layout()
         // Row heights can change without this view being told (track height); settle once more after SwiftUI has.
-        DispatchQueue.main.async { c.layout() }
+        if c.stale || c.lanesHeight == 0 { DispatchQueue.main.async { c.stale = true; c.layout() } }
     }
 }
