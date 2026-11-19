@@ -91,7 +91,8 @@ final class VoiceAgent {
     private func agentID() async throws -> String {
         let d = UserDefaults.standard
         if let id = d.string(forKey: "voiceAgentID"), d.integer(forKey: "voiceAgentVersion") == Self.version { return id }
-        var tools: [String] = []
+        // Tools made on an earlier try are kept, so a failed attempt does not leave copies on the account.
+        var tools: [String] = d.integer(forKey: "voiceToolsVersion") == Self.version ? (d.stringArray(forKey: "voiceToolIDs") ?? []) : []
         let specs: [[String: Any]] = [
             ["type": "client", "name": "run_command", "expects_response": true, "response_timeout_secs": 120,
              "description": "Runs one mitroley command on the open session and returns its result as JSON.",
@@ -103,11 +104,14 @@ final class VoiceAgent {
              "parameters": ["type": "object", "required": ["place"], "properties": [
                 "place": ["type": "string", "description": "One of: settings, export, claude, room, session, master_effects."]]]],
         ]
-        for spec in specs {
+        if tools.count != specs.count { tools = [] }
+        for spec in specs where tools.count < specs.count {
             let made = try await Self.send("POST", "/v1/convai/tools", ["tool_config": spec])
             guard let id = made["id"] as? String else { throw ServiceError(message: "ElevenLabs did not return a tool id.") }
             tools.append(id)
         }
+        d.set(tools, forKey: "voiceToolIDs")
+        d.set(Self.version, forKey: "voiceToolsVersion")
         let languages = ["hi", "es", "fr", "de", "pt", "it", "ja", "ko", "zh", "ar", "ta", "ru", "id", "tr", "nl", "pl"]
         let config: [String: Any] = [
             "agent": [
@@ -120,7 +124,8 @@ final class VoiceAgent {
                                                               "params": ["system_tool_type": "language_detection"]]],
                 ] as [String: Any],
             ] as [String: Any],
-            "tts": ["model_id": "eleven_flash_v2_5", "agent_output_audio_format": "pcm_16000"],
+            // An English agent must use a v2 model; ElevenLabs moves to its multilingual one by itself when the language changes.
+            "tts": ["model_id": "eleven_flash_v2", "agent_output_audio_format": "pcm_16000"],
             "asr": ["user_input_audio_format": "pcm_16000"],
             "language_presets": Dictionary(uniqueKeysWithValues: languages.map { ($0, ["overrides": [String: Any]()] as [String: Any]) }),
         ]
@@ -181,13 +186,25 @@ final class VoiceAgent {
     }
 
     private func startAudio() throws {
+        // First with the Mac's echo canceller, so the helper does not hear its own voice from the speakers. Some audio
+        // set-ups refuse it; then carry on without, where headphones avoid the echo.
+        do { try startAudio(echoCancelling: true) } catch {
+            engine.stop()
+            engine.inputNode.removeTap(onBus: 0)
+            try startAudio(echoCancelling: false)
+        }
+    }
+
+    private func startAudio(echoCancelling: Bool) throws {
         let input = engine.inputNode
-        // The Mac's echo canceller, so the helper does not hear its own voice from the speakers.
-        try? input.setVoiceProcessingEnabled(true)
+        if input.isVoiceProcessingEnabled != echoCancelling { try input.setVoiceProcessingEnabled(echoCancelling) }
         if speaker.engine == nil { engine.attach(speaker) }
         engine.connect(speaker, to: engine.mainMixerNode, format: play)
+        // Read after switching echo cancelling: it changes the microphone's format.
         let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, let conv = AVAudioConverter(from: format, to: wire) else { throw ServiceError(message: "No microphone was found.") }
+        guard format.sampleRate > 0, format.channelCount > 0, let conv = AVAudioConverter(from: format, to: wire) else { throw ServiceError(message: "No microphone was found.") }
+        // Only the first channel: the echo canceller can hand over several.
+        if format.channelCount > 1 { conv.channelMap = [0] }
         converter = conv
         let wire = self.wire
         input.removeTap(onBus: 0)

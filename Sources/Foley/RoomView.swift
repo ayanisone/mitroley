@@ -140,11 +140,19 @@ struct RoomView: View {
                         }
                         .onEnded { _ in meterStart = nil }))
             HStack(alignment: .top, spacing: 0) {
-                ChannelMeters(levels: channels, format: store.project.format)
+                // The meters keep their full width; in a narrow window the lists beside them give way, and if there is
+                // still not room they scroll sideways from the left, so the first speaker is never cut off.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    ChannelMeters(levels: channels, format: store.project.format)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(maxHeight: .infinity)
+                }
+                .frame(maxWidth: .infinity)
+                .layoutPriority(1)
                 Rectangle().fill(Theme.line).frame(width: 1)
                 // Scrolls when the strip is short, so it never spills up over the room.
                 ScrollView { RoomLoudness() }
-                    .frame(width: 216)
+                    .frame(width: 196)
                     .frame(maxHeight: .infinity, alignment: .top)
                 Rectangle().fill(Theme.line).frame(width: 1)
                 ScrollView {
@@ -156,8 +164,13 @@ struct RoomView: View {
                                     Text(d.name).font(.system(size: 12, weight: selected == d.id ? .semibold : .regular))
                                         .foregroundStyle(d.silent ? Theme.tertiary : Color.white).lineLimit(1)
                                     Spacer(minLength: 6)
-                                    Text(String(format: "%+.2f  %+.2f  %.2f", d.now.x, d.now.y, d.now.z))
-                                        .font(.system(size: 10.5).monospacedDigit()).foregroundStyle(Theme.tertiary)
+                                    // The position, when there is room for it on one line; the name alone otherwise.
+                                    ViewThatFits(in: .horizontal) {
+                                        Text(String(format: "%+.2f  %+.2f  %.2f", d.now.x, d.now.y, d.now.z))
+                                            .font(.system(size: 10.5).monospacedDigit()).foregroundStyle(Theme.tertiary)
+                                            .lineLimit(1).fixedSize()
+                                        Color.clear.frame(width: 0, height: 0)
+                                    }
                                 }
                                 .contentShape(Rectangle())
                             }
@@ -166,7 +179,7 @@ struct RoomView: View {
                     }
                     .padding(14)
                 }
-                .frame(width: 280)
+                .frame(minWidth: 150, maxWidth: 280)
             }
             .frame(height: meterHeight)
             .clipped()
@@ -210,7 +223,7 @@ struct ChannelMeters: View {
     private static func unit(_ db: Double) -> CGFloat { CGFloat(min(1, max(0, (db - floor) / -floor))) }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
+        HStack(alignment: .top, spacing: 9) {
             // The scale.
             GeometryReader { geo in
                 // Fewer numbers when the meter is short, so they never run into each other.
@@ -226,7 +239,7 @@ struct ChannelMeters: View {
             .padding(.bottom, 34)
             ForEach(groups, id: \.0) { group in
                 VStack(spacing: 6) {
-                    HStack(alignment: .bottom, spacing: 8) {
+                    HStack(alignment: .bottom, spacing: 3) {
                         ForEach(group.1, id: \.self) { c in
                             VStack(spacing: 5) {
                                 bar(c)
@@ -240,9 +253,9 @@ struct ChannelMeters: View {
                 }
             }
         }
-        .padding(.horizontal, 18)
+        .padding(.horizontal, 12)
         .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxHeight: .infinity)
         .onChange(of: levels) { _, now in
             let t = Date()
             for c in 0..<min(12, now.count) {
