@@ -176,8 +176,8 @@ struct VersionSwitch: View {
     @Environment(Store.self) private var store
     var body: some View {
         let list = store.versionList
-        GlassSegments(options: list.enumerated().map { (value: $1, label: String(UnicodeScalar(UInt8(65 + min(25, $0))))) },
-                      selection: store.folder) { store.switchVersion(to: $0) }
+        SegmentedPill(options: list.enumerated().map { (value: $1, label: String(UnicodeScalar(UInt8(65 + min(25, $0))))) },
+                      selection: store.folder, segmentWidth: 30, settleFirst: true) { store.switchVersion(to: $0) }
             .help("Cuts of this film, oldest first. Switching stays on the same moment of picture.")
     }
 }

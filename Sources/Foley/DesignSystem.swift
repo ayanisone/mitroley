@@ -121,29 +121,67 @@ struct SegmentedPill<T: Hashable>: View {
     var segmentWidth: CGFloat = 62
     var height: CGFloat = 26
     var size: CGFloat = 12
+    /// For choices that are heavy to apply (opening another cut): the highlight lands first, then the change is made,
+    /// so the work cannot freeze the highlight half way.
+    var settleFirst = false
     let select: (T) -> Void
-    @Namespace private var space
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Where the highlight's centre is while it is being dragged.
+    @State private var drag: CGFloat?
+    @State private var pressed = false
+    /// A choice made but not yet applied (see settleFirst).
+    @State private var chosen: Int?
 
+    private func centre(_ i: Int) -> CGFloat { CGFloat(i) * segmentWidth + segmentWidth / 2 }
+    private func index(at x: CGFloat) -> Int { min(options.count - 1, max(0, Int((x / segmentWidth).rounded(.down)))) }
+
+    // One highlight that slides: click a segment and it glides there; press and drag and it follows the pointer
+    // exactly, then settles on the segment it is over when let go.
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(options, id: \.value) { option in
-                let on = option.value == selection
-                Text(option.label)
-                    .font(.system(size: size, weight: .semibold))
-                    .foregroundStyle(on ? Color.white : Theme.secondary)
-                    .frame(width: segmentWidth, height: height)
-                    .background {
-                        if on {
-                            Capsule().fill(Color.white.opacity(0.18)).matchedGeometryEffect(id: "selection", in: space)
-                        }
-                    }
-                    .contentShape(Rectangle())
-                    .gesture(DragGesture(minimumDistance: 0).onChanged { _ in
-                        if !on { withAnimation(Motion.quick(reduceMotion)) { select(option.value) } }
-                    })
+        let selected = chosen ?? (options.firstIndex { $0.value == selection } ?? 0)
+        let last = centre(max(0, options.count - 1))
+        let x = drag.map { min(last, max(segmentWidth / 2, $0)) } ?? centre(selected)
+        let under = drag == nil ? selected : index(at: x)
+        ZStack(alignment: .leading) {
+            Capsule().fill(Color.white.opacity(pressed ? 0.24 : 0.18))
+                .frame(width: segmentWidth, height: height)
+                .scaleEffect(pressed ? 0.96 : 1)
+                .offset(x: x - segmentWidth / 2)
+                .animation(drag == nil ? (reduceMotion ? .easeOut(duration: 0.12) : .spring(response: 0.3, dampingFraction: 0.8)) : nil, value: x)
+                .animation(.spring(response: 0.22, dampingFraction: 0.85), value: pressed)
+            HStack(spacing: 0) {
+                ForEach(Array(options.enumerated()), id: \.offset) { i, option in
+                    Text(option.label)
+                        .font(.system(size: size, weight: .semibold))
+                        .foregroundStyle(i == under ? Color.white : Theme.secondary)
+                        .frame(width: segmentWidth, height: height)
+                        .animation(.easeOut(duration: 0.12), value: under)
+                }
             }
         }
+        .contentShape(Rectangle())
+        .gesture(DragGesture(minimumDistance: 0)
+            .onChanged { g in
+                pressed = true
+                // A plain click does not move it under the pointer; a drag does.
+                if drag != nil || abs(g.translation.width) > 3 { drag = g.location.x }
+            }
+            .onEnded { g in
+                let i = index(at: min(last, max(segmentWidth / 2, drag ?? g.location.x)))
+                pressed = false
+                drag = nil
+                guard options[i].value != selection else { return }
+                let value = options[i].value
+                if settleFirst {
+                    chosen = i
+                    DispatchQueue.main.asyncAfter(deadline: .now() + (reduceMotion ? 0.05 : 0.28)) {
+                        select(value)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { chosen = nil }
+                    }
+                } else {
+                    select(value)
+                }
+            })
         .padding(3)
         .background(Color.white.opacity(0.07), in: Capsule())
     }
