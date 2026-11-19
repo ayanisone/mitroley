@@ -205,15 +205,22 @@ private struct ToolColumn: View {
     /// shape is read from its edge: a bright rim where light catches the top, a faint rainbow where the edge bends
     /// it, a soft glint, and a shadow underneath. Drawn by hand: the system's glass turns milky when it sits on
     /// another piece of glass, which hid the icon.
-    private var selector: some View {
+    private var selector: some View { WaterDrop(size: cell, pressed: pressed) }
+}
+
+/// A drop of clear water: the selector that rides over tools and switches.
+struct WaterDrop: View {
+    let size: CGFloat
+    let pressed: Bool
+    var body: some View {
         let hues: [Color] = [Color(red: 0.55, green: 0.85, blue: 1), Color(red: 1, green: 0.75, blue: 0.9), Color(red: 1, green: 0.95, blue: 0.7),
                              Color(red: 0.7, green: 1, blue: 0.85), Color(red: 0.55, green: 0.85, blue: 1)]
         let rainbow = AngularGradient(colors: hues, center: .center)
         let body = RadialGradient(colors: [Color.white.opacity(0.02), Color.white.opacity(0.09)], center: .center,
-                                  startRadius: cell * 0.2, endRadius: cell * 0.6)
+                                  startRadius: size * 0.2, endRadius: size * 0.6)
         let rim = LinearGradient(colors: [Color.white.opacity(0.9), Color.white.opacity(0.08), Color.white.opacity(0.35)],
                                  startPoint: .top, endPoint: .bottom)
-        let glintWidth: CGFloat = cell * 0.34, glintHeight: CGFloat = cell * 0.16
+        let glintWidth: CGFloat = size * 0.34, glintHeight: CGFloat = size * 0.16
         return ZStack {
             Circle().fill(body)
             // The edge bends light: a thin band of colour, strongest at the rim.
@@ -224,8 +231,71 @@ private struct ToolColumn: View {
             Ellipse().fill(Color.white.opacity(0.28))
                 .frame(width: glintWidth, height: glintHeight)
                 .blur(radius: 1.5)
-                .offset(x: -cell * 0.16, y: -cell * 0.3)
+                .offset(x: -size * 0.16, y: -size * 0.3)
         }
         .shadow(color: Color.black.opacity(0.45), radius: 5, y: 3)
+    }
+}
+
+/// A row of short labels with one water-drop selector that glides between them. Click a label, or press and slide.
+struct GlassSegments<T: Hashable>: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let options: [(value: T, label: String)]
+    let selection: T
+    var cell: CGFloat = 30
+    let select: (T) -> Void
+    @State private var drag: CGFloat?
+    @State private var speed: CGFloat = 0
+    @State private var pressed = false
+
+    private func centre(_ i: Int) -> CGFloat { CGFloat(i) * cell + cell / 2 }
+    private func index(at x: CGFloat) -> Int { min(options.count - 1, max(0, Int((x / cell).rounded(.down)))) }
+
+    var body: some View {
+        let selected = options.firstIndex { $0.value == selection } ?? 0
+        let last = centre(max(0, options.count - 1))
+        let x = drag.map { min(last, max(cell / 2, $0)) } ?? centre(selected)
+        let under = drag == nil ? selected : index(at: x)
+        let stretch = reduceMotion ? 0 : min(0.32, abs(speed) / 2600)
+        ZStack(alignment: .leading) {
+            HStack(spacing: 0) {
+                ForEach(Array(options.enumerated()), id: \.offset) { i, o in
+                    Text(o.label)
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(i == under ? Color.white : Theme.secondary)
+                        .scaleEffect(i == under ? (pressed ? 1.25 : 1.12) : 1)
+                        .frame(width: cell, height: cell - 4)
+                        .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.7), value: under)
+                }
+            }
+            WaterDrop(size: cell - 4, pressed: pressed)
+                .frame(width: cell - 4, height: cell - 4)
+                .scaleEffect(x: (pressed ? 1.2 : 1) * (1 + stretch), y: (pressed ? 1.2 : 1) * (1 - stretch * 0.45))
+                .offset(x: x - (cell - 4) / 2)
+                .allowsHitTesting(false)
+                .animation(drag == nil ? (reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.34, dampingFraction: 0.72)) : nil, value: x)
+                .animation(.spring(response: 0.25, dampingFraction: 0.8), value: pressed)
+        }
+        .frame(width: CGFloat(options.count) * cell, height: cell - 4)
+        .contentShape(Rectangle())
+        .gesture(DragGesture(minimumDistance: 0)
+            .onChanged { g in
+                pressed = true
+                drag = g.location.x
+                speed = g.velocity.width
+            }
+            .onEnded { g in
+                let landing = g.location.x + g.velocity.width * 0.06
+                let i = index(at: min(last, max(cell / 2, landing)))
+                speed = 0
+                pressed = false
+                drag = nil
+                if options[i].value != selection { select(options[i].value) }
+            })
+        // The drop is 4 pt narrower than its cell, so 1 pt at the sides and 3 pt above and below leave the same
+        // 3 pt of bar showing all the way round it, at either end.
+        .padding(.horizontal, 1)
+        .padding(.vertical, 3)
+        .background(Color.white.opacity(0.07), in: Capsule())
     }
 }

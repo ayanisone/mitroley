@@ -32,6 +32,7 @@ final class Player {
     @ObservationIgnored private var seeking = false
     @ObservationIgnored private var pendingSeek: Double?
     @ObservationIgnored private var videoDuration = 0.0
+    @ObservationIgnored private var items: [String: AVPlayerItem] = [:]
     /// Called whenever the transport starts, so the store can stop a take that is auditioning.
     @ObservationIgnored var onPlay: (() -> Void)?
 
@@ -174,7 +175,10 @@ final class Player {
 
     func loadVideo(_ url: URL?) {
         if let url {
-            let item = AVPlayerItem(url: url)
+            // Kept per file: going back to a cut that was open a moment ago does not open its video again.
+            let item = items[url.path] ?? AVPlayerItem(url: url)
+            items[url.path] = item
+            if items.count > 6, let extra = items.keys.first(where: { $0 != url.path }) { items[extra] = nil }
             video.replaceCurrentItem(with: item)
             videoDuration = 0
             Task {

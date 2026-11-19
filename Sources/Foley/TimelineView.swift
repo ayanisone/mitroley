@@ -649,6 +649,8 @@ struct FilmstripView: View {
         .opacity(0.8)
         .contentShape(Rectangle())
         .gesture(scrub(store, pps))
+        // Clicking the filmstrip also brings up the session's settings.
+        .simultaneousGesture(TapGesture().onEnded { store.showSession() })
     }
 }
 

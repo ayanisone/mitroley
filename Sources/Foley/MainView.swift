@@ -164,6 +164,8 @@ struct VideoPane: View {
                 // The picture keeps its shape inside what is left, centred; where it is shorter than that
                 // space, the extra is shared equally above it and between it and the transport.
                 PlayerLayerView(player: store.player.video)
+                    // Clicking the picture shows the session's own settings (name, picture, revised cut, spaces).
+                    .onTapGesture { store.showSession() }
                     .padding(.bottom, Self.gap + TransportBar.height + Self.gap)
                     .padding([.top, .horizontal], Self.gap)
             } else {

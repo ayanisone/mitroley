@@ -509,6 +509,17 @@ final class Commands {
                                         "doc": [doc.frame.width, doc.frame.height],
                                         "fitting": [doc.intrinsicContentSize.width, doc.intrinsicContentSize.height],
                                         "floating": sv.subviews.map { String(describing: type(of: $0)) }])
+        case "debug_switch":
+            // Not listed as a tool: switches through the cuts of this film and back, and reports how long each switch held the main thread.
+            let home = store.folder
+            var times: [[String: Any]] = []
+            for url in store.versionList + [home] where url != store.folder {
+                let t0 = CACurrentMediaTime()
+                store.switchVersion(to: url)
+                times.append(["to": url.deletingPathExtension().lastPathComponent, "ms": (CACurrentMediaTime() - t0) * 1000])
+                try await Task.sleep(nanoseconds: 700_000_000)
+            }
+            return CommandResult(json: ["switches": times])
         case "debug_resize":
             // Not listed as a tool: resizes the main window back and forth and reports how often the main thread got a turn.
             guard let w = NSApp.windows.first(where: { $0.isVisible && $0.styleMask.contains(.titled) && !($0 is NSPanel) && $0.frame.width > 900 }) else {

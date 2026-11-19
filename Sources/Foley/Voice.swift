@@ -153,9 +153,14 @@ struct VoiceOverSection: View {
         QuietField(placeholder: "Voice ID from ElevenLabs", text: Binding(get: { s.id }, set: { v in set { $0.id = v } }))
         Caption("In ElevenLabs, open the voice's menu and choose Copy voice ID, then paste it here. Any voice in your account or the voice library works.")
         Picker("Model", selection: Binding(get: { s.model }, set: { v in set { $0.model = v } })) {
-            ForEach(VoiceSettings.models, id: \.0) { m in Text(m.1).tag(m.0) }
+            // The account's own list when it has loaded; a short built-in list until then.
+            let list: [(String, String)] = store.voiceModels.isEmpty ? VoiceSettings.models : store.voiceModels.map { ($0.id, $0.name) }
+            ForEach(list, id: \.0) { m in Text(m.1).tag(m.0) }
+            if !list.contains(where: { $0.0 == s.model }) { Text(s.model).tag(s.model) }
         }
         .font(.system(size: 12))
+        .task { await store.loadVoiceModels() }
+        QuietField(placeholder: "Or type a model ID, e.g. eleven_v3", text: Binding(get: { s.model }, set: { v in set { $0.model = v.trimmingCharacters(in: .whitespaces) } }))
         Field(title: "Stability", value: String(format: "%.0f%%", s.stability * 100)) { slide(\.stability, 0...1, reset: 0.5) }
         Field(title: "Similarity", value: String(format: "%.0f%%", s.similarity * 100)) { slide(\.similarity, 0...1, reset: 0.75) }
         Field(title: "Style", value: String(format: "%.0f%%", s.style * 100)) { slide(\.style, 0...1, reset: 0) }

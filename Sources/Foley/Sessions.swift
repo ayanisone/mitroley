@@ -193,3 +193,17 @@ extension Store {
         }
     }
 }
+
+extension Store {
+    /// Shows the session's own settings in the side panel.
+    func showSession() {
+        selection = .none
+        if showClaude, !agent.running { showClaude = false }
+    }
+
+    /// Asks ElevenLabs which speech models this account can use, so new ones appear without an app update.
+    func loadVoiceModels() async {
+        guard voiceModels.isEmpty, Secrets.has(.elevenLabs) else { return }
+        voiceModels = (try? await ElevenLabs.speechModels()) ?? []
+    }
+}

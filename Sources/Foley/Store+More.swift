@@ -186,12 +186,24 @@ extension Store {
             list.append(URL(fileURLWithPath: next)); cur = p; steps += 1
         }
         versionList = list
+        // Read the other cuts' sounds into memory in the background, so the first switch to one is as quick as the rest.
+        let others = list.filter { $0 != folder }
+        guard !others.isEmpty else { return }
+        Task.detached(priority: .utility) {
+            for url in others {
+                guard let data = try? Data(contentsOf: url.appendingPathComponent("project.json")),
+                      let p = try? JSONDecoder().decode(Project.self, from: data) else { continue }
+                for t in p.tracks { for c in t.clips { if let take = c.take { _ = AudioCache.shared.buffer(Store.url(for: take, in: url)) } } }
+            }
+        }
     }
 
     /// Opens another cut of the same film at the matching moment.
     func switchVersion(to url: URL) {
         guard url != folder else { return }
         let t = player.time, from = folder, old = project
+        // Comparing cuts is done by ear: if it was playing, it keeps playing on the other cut.
+        let wasPlaying = player.isPlaying
         guard open(url) else { return }
         var target = t
         if project.previousVersion == from.path, let segs = project.revision?.segments {
@@ -201,6 +213,7 @@ extension Store {
             if let s = segs.first(where: { t >= $0.start && t < $0.end }) { target = t + s.delta }
         }
         player.seek(min(max(0, target), project.duration))
+        if wasPlaying { player.play() }
     }
 
     /// Makes a new session for a revised cut of this film. Sounds stay with their picture; only new picture is left silent.

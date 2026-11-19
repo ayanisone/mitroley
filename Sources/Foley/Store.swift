@@ -109,6 +109,7 @@ final class Store {
 
     static var library: URL { Places.sessions }
     @ObservationIgnored private var dirty = false
+    @ObservationIgnored private var filmstrips: [String: [NSImage]] = [:]
     @ObservationIgnored private var saveTimer: Timer?
 
     init() {
@@ -290,8 +291,12 @@ final class Store {
     private func loadFilmstrip() {
         guard let url = videoURL, let v = project.video else { return }
         let target = folder
+        // Kept per video: switching back to a cut shows its filmstrip at once.
+        if let have = filmstrips[url.path] { filmstrip = have; return }
         Task {
             let frames = await VideoAnalysis.filmstrip(url, duration: v.duration, count: 28)
+            self.filmstrips[url.path] = frames
+            if self.filmstrips.count > 6, let extra = self.filmstrips.keys.first(where: { $0 != url.path }) { self.filmstrips[extra] = nil }
             if self.folder == target { self.filmstrip = frames }
         }
     }
@@ -505,6 +510,8 @@ final class Store {
     var versionList: [URL] = []
     /// Footfalls tapped in by hand (T while playing), waiting to be placed on `tapTrack`.
     var voices: [Voice] = []
+    /// Speech models the ElevenLabs account offers: (id, name). Empty until asked for.
+    var voiceModels: [(id: String, name: String)] = []
     /// The track a dragged clip is hovering over.
     var dropTrack: UUID?
     var taps: [Double] = []

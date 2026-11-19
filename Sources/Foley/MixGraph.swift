@@ -151,7 +151,7 @@ final class TrackRenderer {
 /// The same graph runs live and in offline (manual rendering) mode, so exports match what was heard.
 final class MixGraph {
     struct TrackNodes {
-        let id: UUID
+        var id: UUID
         let source: AVAudioSourceNode
         let renderer: TrackRenderer
         let eq: AVAudioUnitEQ
@@ -162,7 +162,7 @@ final class MixGraph {
         var plugins: [(id: UUID, unit: AVAudioUnit)] = []
     }
     final class SpaceNodes {
-        let id: UUID
+        var id: UUID
         let input = AVAudioMixerNode()
         let delay = AVAudioUnitDelay()
         let reverb = AVAudioUnitReverb()
@@ -235,6 +235,13 @@ final class MixGraph {
     func rebuildIfNeeded(_ p: Project) -> Bool {
         let sig = Self.signature(p)
         guard sig != signature else { return false }
+        // Another session with the same shape (the same number of tracks and spaces, the same plug-ins in the same
+        // places), as when switching between cuts of one film: keep every node and hand them their new owners.
+        // Tearing the engine down and building it again is what made switching cuts slow.
+        if rebind(p) {
+            signature = sig
+            return false
+        }
         let wasRunning = engine.isRunning
         if wasRunning { engine.stop() }
         for t in tracks {
@@ -246,10 +253,15 @@ final class MixGraph {
             for n in [s.input, s.delay, s.reverb, s.eq] as [AVAudioNode] { engine.detach(n) }
             if let c = s.convolver { engine.detach(c) }
         }
+        // Never built smaller than it was: spare track and space nodes sit silent, so going back to a session with more
+        // tracks (the other cut of a film) can reuse them instead of rebuilding.
+        let spareTracks = max(0, tracks.count - p.tracks.count), spareSpaces = max(0, spaces.count - p.spaces.count)
+        let spaceList = p.spaces + (0..<spareSpaces).map { _ in Space(name: "", hue: 0) }
+        let trackList = p.tracks + (0..<spareTracks).map { _ in Track(name: "", kind: .fx) }
         tracks = []
         spaces = []
 
-        for sp in p.spaces {
+        for sp in spaceList {
             let n = SpaceNodes(id: sp.id)
             for node in [n.input, n.delay, n.reverb, n.eq] as [AVAudioNode] { engine.attach(node) }
             engine.connect(n.input, to: n.delay, format: stereo)
@@ -271,7 +283,7 @@ final class MixGraph {
             spaces.append(n)
         }
 
-        for tr in p.tracks {
+        for tr in trackList {
             let renderer = TrackRenderer()
             let clock = self.clock
             let source = AVAudioSourceNode(format: stereo) { silence, ts, frames, abl in
@@ -325,6 +337,50 @@ final class MixGraph {
         }
         signature = sig
         if wasRunning { try? engine.start() }
+        return true
+    }
+
+    /// Re-labels the existing nodes for a project of the same shape. false if the shape differs.
+    private func rebind(_ p: Project) -> Bool {
+        guard !tracks.isEmpty, p.tracks.count <= tracks.count, p.spaces.count <= spaces.count else { return false }
+        // Spare nodes beyond this project's own must be plain: no plug-ins, no impulse response.
+        for i in p.tracks.count..<tracks.count where !tracks[i].plugins.isEmpty { return false }
+        for j in p.spaces.count..<spaces.count where spaces[j].convolver != nil { return false }
+        for (j, sp) in p.spaces.enumerated() where (sp.ir != nil) != (spaces[j].convolver != nil) { return false }
+        for (i, tr) in p.tracks.enumerated() {
+            let slots = (tr.plugins ?? []).filter { Plugins.isInstalled($0) }
+            guard slots.count == tracks[i].plugins.count else { return false }
+            for (k, slot) in slots.enumerated() {
+                let d = tracks[i].plugins[k].unit.audioComponentDescription
+                guard d.componentType == slot.type, d.componentSubType == slot.subtype, d.componentManufacturer == slot.manufacturer else { return false }
+            }
+        }
+        let oldSpaces = spaces.map(\.id)
+        // Spares get new names nobody uses, and go silent.
+        for j in p.spaces.count..<spaces.count { spaces[j].id = UUID() }
+        for i in p.tracks.count..<tracks.count {
+            tracks[i].id = UUID()
+            tracks[i].renderer.set([], buffers: [])
+            tracks[i].dryStereo.outputVolume = 0
+            tracks[i].dryMono.outputVolume = 0
+            for node in tracks[i].sends.values { node.outputVolume = 0 }
+        }
+        for (j, sp) in p.spaces.enumerated() {
+            spaces[j].id = sp.id
+            // Forget what was loaded, so the space's own reverb and response are set again.
+            spaces[j].kind = nil; spaces[j].size = nil; spaces[j].irKey = nil
+        }
+        for (i, tr) in p.tracks.enumerated() {
+            tracks[i].id = tr.id
+            var sends: [UUID: AVAudioMixerNode] = [:]
+            for (j, old) in oldSpaces.enumerated() { if let node = tracks[i].sends[old] { sends[spaces[j].id] = node } }
+            tracks[i].sends = sends
+            let slots = (tr.plugins ?? []).filter { Plugins.isInstalled($0) }
+            for (k, slot) in slots.enumerated() {
+                tracks[i].plugins[k].id = slot.id
+                Plugins.restore(slot, into: tracks[i].plugins[k].unit)
+            }
+        }
         return true
     }
 

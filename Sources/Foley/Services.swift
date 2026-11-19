@@ -324,6 +324,18 @@ enum ElevenLabs {
         return (data, "mp3")
     }
 
+    /// Every model on the account that can turn text into speech.
+    static func speechModels() async throws -> [(id: String, name: String)] {
+        let (data, resp) = try await URLSession.shared.data(for: try authed("https://api.elevenlabs.io/v1/models"))
+        guard (resp as? HTTPURLResponse)?.statusCode == 200, let list = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            throw ServiceError(message: "Could not read the list of ElevenLabs models.")
+        }
+        return list.compactMap { m in
+            guard (m["can_do_text_to_speech"] as? Bool) == true, let id = m["model_id"] as? String else { return nil }
+            return (id, (m["name"] as? String) ?? id)
+        }
+    }
+
     /// Asks ElevenLabs whether it accepts a key. Costs nothing.
     static func verify(_ key: String) async -> (ok: Bool, message: String) {
         if let problem = Secrets.problem(key) { return (false, problem) }
