@@ -24,8 +24,24 @@ final class VoiceAgent {
     @ObservationIgnored private var pending = 0     // spoken chunks still to play
     @ObservationIgnored private var quietUntil = Date.distantPast
     @ObservationIgnored private var audioRunning = false
+    // Talking over the helper. There is no echo canceller, so the helper's own voice coming back through the
+    // microphone is told apart from the person by level: how loud the echo usually is for what is playing is
+    // learned as it speaks, and anything well above that is the person.
+    @ObservationIgnored private var playLevel: Float = 0     // how loud the helper is right now, held briefly
+    @ObservationIgnored private var echoGain: Float = 0      // microphone level per unit of playback, learned
+    @ObservationIgnored private var learned = 0
+    @ObservationIgnored private var noise: Float = 0         // the room when nobody speaks
+    @ObservationIgnored private var over = 0
+    @ObservationIgnored private var preroll: [String] = []   // the last half second of microphone, sent when you cut in
+    @ObservationIgnored private var deafUntil = Date.distantPast   // the rest of an interrupted answer is dropped
+    @ObservationIgnored private var cutBelow = -1            // audio numbered at or below this belongs to an interrupted answer
     /// Bump when the prompt or tools change, so the agent on the account is brought up to date.
-    private static let version = 3
+    private static let version = 5
+    /// Everything the agent on the account depends on. When it changes, the agent is updated at the next start.
+    private static var signature: String {
+        let d = UserDefaults.standard
+        return "\(version)|\(d.string(forKey: "voiceAgentVoice") ?? "")|\(d.string(forKey: "voiceAgentStyle") ?? "")"
+    }
 
     var isOn: Bool { state != .off }
 
@@ -53,6 +69,7 @@ final class VoiceAgent {
     }
 
     private static func prompt() -> String {
+        let style = (UserDefaults.standard.string(forKey: "voiceAgentStyle") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         var lines: [String] = []
         for t in Commands.tools {
             guard let name = t["name"] as? String, let d = t["description"] as? String else { continue }
@@ -68,14 +85,24 @@ final class VoiceAgent {
         mitroley was made by Ayan Mitra. The person is at the app right now, talking to you. Keep answers short and spoken-style: one or two sentences, no lists, no markdown.
 
         LANGUAGE. Answer in the language the person is speaking. If they change language, change with them at once, mid-conversation, \
-        and use the language detection tool so your voice follows. Hindi mixed with English (Hinglish) is common: match it.
+        and use the language detection tool so your voice follows. The person speaks English, Hindi and Bengali and mixes them freely \
+        (Hinglish, Banglish): match whatever they just used. Bengali is "bn".
+        \(style.isEmpty ? "" : "\nHOW TO BEHAVE. \(style)\n")
 
         DOING THINGS. You can work the app. Call run_command with the command's name and its arguments as a JSON object written as a string, \
         for example name "transport", arguments_json "{\\"action\\":\\"play\\"}". Start with get_project when you need to know what is in the session. \
         Do what is asked without asking permission for ordinary edits; every change can be undone with Command-Z. Ask first only before deleting \
         tracks or clips, or before generating sound, which spends the person's ElevenLabs credits. Say in a few words what you did.
 
-        SHOWING THINGS. When asked where something is or what it does, explain briefly and call show_in_app to open that part of the app.
+        If the person starts talking while you are speaking, stop and listen. Never say you cannot do something in the app before trying: \
+        if no command fits, use look to see what is on screen and menu to press a menu item.
+
+        THE INTERFACE. These also go through run_command, and work the app itself rather than the session:
+        \(VoiceAgent.interfaceCommands)
+
+        EXPLAINING. When asked what something is, how to do something or why something sounds the way it does, answer plainly from what you know \
+        about the app and about sound for picture, and show it: open the panel, select the thing or scroll to it while you explain. \
+        Use look first when the question is about what is on screen right now.
 
         WHERE THINGS ARE.
         - Picture at the top, with the playback bar under it: play, timecode, loop, the video's own sound, A/B switch between cuts, output meter (click it for master effects: compressor, limiter, surround reverb, fold-down trims, loudness), session format menu (7.1.4, 5.1, binaural, stereo), Stereo/Spatial listening switch.
@@ -92,9 +119,10 @@ final class VoiceAgent {
     /// Makes the agent and its two tools on the person's ElevenLabs account once, and brings them up to date after app updates.
     private func agentID() async throws -> String {
         let d = UserDefaults.standard
-        if let id = d.string(forKey: "voiceAgentID"), d.integer(forKey: "voiceAgentVersion") == Self.version { return id }
-        // Tools made on an earlier try are kept, so a failed attempt does not leave copies on the account.
-        var tools: [String] = d.integer(forKey: "voiceToolsVersion") == Self.version ? (d.stringArray(forKey: "voiceToolIDs") ?? []) : []
+        if let id = d.string(forKey: "voiceAgentID"), d.string(forKey: "voiceAgentSignature") == Self.signature { return id }
+        let signature = Self.signature
+        // The two tools have not changed since they were first made, so they are kept: no copies pile up on the account.
+        var tools: [String] = d.stringArray(forKey: "voiceToolIDs") ?? []
         let specs: [[String: Any]] = [
             ["type": "client", "name": "run_command", "expects_response": true, "response_timeout_secs": 120,
              "description": "Runs one mitroley command on the open session and returns its result as JSON.",
@@ -113,8 +141,20 @@ final class VoiceAgent {
             tools.append(id)
         }
         d.set(tools, forKey: "voiceToolIDs")
-        d.set(Self.version, forKey: "voiceToolsVersion")
-        let languages = ["hi", "es", "fr", "de", "pt", "it", "ja", "ko", "zh", "ar", "ta", "ru", "id", "tr", "nl", "pl"]
+        let voice = d.string(forKey: "voiceAgentVoice") ?? ""
+        let european = ["es", "fr", "de", "pt", "it", "ja", "ko", "zh", "ar", "ru", "id", "tr", "nl", "pl"]
+        // Newest voice model first: it is the one that speaks Bengali and the other Indian languages. Older ones are the fallback
+        // for accounts that do not have it.
+        let attempts: [(String, [String])] = [
+            ("eleven_v4_turbo", ["hi", "bn", "ta", "te", "mr", "gu", "kn", "ml", "pa", "ur"] + european),
+            ("eleven_v3_conversational", ["hi", "bn", "ta", "te", "mr", "gu", "kn", "ml", "pa", "ur"] + european),
+            ("eleven_v3_conversational", ["hi", "bn", "ta"] + european),
+            ("eleven_flash_v2", ["hi", "ta"] + european),
+        ]
+        var lastError: Error = ServiceError(message: "The helper could not be set up.")
+        for (model, languages) in attempts {
+        var tts: [String: Any] = ["model_id": model, "agent_output_audio_format": "pcm_16000"]
+        if !voice.isEmpty { tts["voice_id"] = voice }
         let config: [String: Any] = [
             "agent": [
                 "first_message": "Hi. What would you like to do?",
@@ -126,23 +166,38 @@ final class VoiceAgent {
                                                               "params": ["system_tool_type": "language_detection"]]],
                 ] as [String: Any],
             ] as [String: Any],
-            // An English agent must use a v2 model; ElevenLabs moves to its multilingual one by itself when the language changes.
-            "tts": ["model_id": "eleven_flash_v2", "agent_output_audio_format": "pcm_16000"],
+            "tts": tts,
             "asr": ["user_input_audio_format": "pcm_16000"],
             "language_presets": Dictionary(uniqueKeysWithValues: languages.map { ($0, ["overrides": [String: Any]()] as [String: Any]) }),
         ]
-        let id: String
-        if let old = d.string(forKey: "voiceAgentID"),
-           (try? await Self.send("PATCH", "/v1/convai/agents/\(old)", ["conversation_config": config])) != nil {
-            id = old
-        } else {
-            let made = try await Self.send("POST", "/v1/convai/agents/create", ["name": "mitroley helper", "conversation_config": config])
-            guard let new = made["agent_id"] as? String else { throw ServiceError(message: "ElevenLabs did not return an agent id.") }
-            id = new
+        do {
+            let id: String
+            var kept: String?
+            if let old = d.string(forKey: "voiceAgentID") {
+                do {
+                    _ = try await Self.send("PATCH", "/v1/convai/agents/\(old)", ["conversation_config": config])
+                    kept = old
+                } catch where error.localizedDescription.contains(" 404 ") {
+                    // Deleted on the website: made again below.
+                    d.removeObject(forKey: "voiceAgentID")
+                }
+            }
+            if let kept {
+                id = kept
+            } else {
+                let made = try await Self.send("POST", "/v1/convai/agents/create", ["name": "mitroley helper", "conversation_config": config])
+                guard let new = made["agent_id"] as? String else { throw ServiceError(message: "ElevenLabs did not return an agent id.") }
+                id = new
+            }
+            d.set(id, forKey: "voiceAgentID")
+            d.set(signature, forKey: "voiceAgentSignature")
+            d.set("\(model) · \(languages.contains("bn") ? "Bengali on" : "no Bengali")", forKey: "voiceAgentSetup")
+            return id
+        } catch {
+            lastError = error
         }
-        d.set(id, forKey: "voiceAgentID")
-        d.set(Self.version, forKey: "voiceAgentVersion")
-        return id
+        }
+        throw lastError
     }
 
     // MARK: The conversation
@@ -157,6 +212,8 @@ final class VoiceAgent {
             return
         }
         do {
+            // In the background: only needed if the person asks for another voice.
+            Task { await store.loadVoices() }
             let id = try await agentID()
             let signed = try await Self.send("GET", "/v1/convai/conversation/get-signed-url?agent_id=\(id)")
             guard let text = signed["signed_url"] as? String, let url = URL(string: text) else { throw ServiceError(message: "ElevenLabs did not return a link to the agent.") }
@@ -187,7 +244,48 @@ final class VoiceAgent {
         engine = AVAudioEngine()
         speaker = AVAudioPlayerNode()
         pending = 0
+        over = 0; preroll = []; playLevel = 0
+        deafUntil = .distantPast; cutBelow = -1
         state = .off
+    }
+
+    /// Stops the helper mid-sentence. `mine` = you asked for it with a click, so the rest of that answer is dropped for good.
+    func interrupt(mine: Bool = true) {
+        guard state == .speaking || pending > 0 else { return }
+        speaker.stop(); speaker.play()
+        pending = 0
+        over = 0
+        quietUntil = .distantPast
+        // Until the service has heard you and moved on, what it still sends belongs to the answer you cut off.
+        deafUntil = mine ? .distantFuture : Date().addingTimeInterval(3)
+        state = .listening
+        for chunk in preroll { sendJSON(["user_audio_chunk": chunk]) }
+        preroll = []
+    }
+
+    /// One buffer of microphone. While the helper is quiet it goes straight to the service. While the helper is speaking it is
+    /// held back (or the helper would hear itself), and watched for you talking over it.
+    private func microphone(_ chunk: String, _ level: Float) {
+        guard state == .speaking else {
+            guard Date() > quietUntil else { return }
+            if noise == 0 || level < noise * 2 { noise = noise == 0 ? level : noise * 0.95 + level * 0.05 }
+            sendJSON(["user_audio_chunk": chunk])
+            return
+        }
+        preroll.append(chunk)
+        if preroll.count > 14 { preroll.removeFirst() }
+        let limit = max(0.012, noise * 4, echoGain * playLevel * 3)
+        if learned >= 8, level > limit {
+            over += 1
+            if over >= 3 { interrupt(mine: false) }
+        } else {
+            over = 0
+            if playLevel > 0.003 {
+                let g = level / playLevel
+                echoGain = learned == 0 ? g : echoGain * 0.9 + g * 0.1
+                learned += 1
+            }
+        }
     }
 
     private func fail(_ message: String) {
@@ -196,8 +294,8 @@ final class VoiceAgent {
     }
 
     /// Plain microphone, no system echo canceller: that canceller is what failed to start on this Mac (error -10875),
-    /// sometimes after hanging for seconds. Echo is avoided a simpler way instead: the microphone is not sent while
-    /// the helper is speaking, so it never hears itself. The cost is that you cannot talk over it mid-sentence.
+    /// sometimes after hanging for seconds. The microphone is not sent while the helper is speaking, so it never hears
+    /// itself; `microphone` listens for you cutting in instead.
     private func startAudio() throws {
         do { try startAudio(echoCancelling: false) } catch {
             engine = AVAudioEngine()
@@ -232,10 +330,23 @@ final class VoiceAgent {
                 return buffer
             }
             guard error == nil, out.frameLength > 0, let samples = out.int16ChannelData else { return }
-            let chunk = Data(bytes: samples[0], count: Int(out.frameLength) * 2).base64EncodedString()
+            let n = Int(out.frameLength)
+            var sum: Float = 0
+            for i in 0..<n { let v = Float(samples[0][i]) / 32768; sum += v * v }
+            let level = (sum / Float(n)).squareRoot()
+            let chunk = Data(bytes: samples[0], count: n * 2).base64EncodedString()
+            Task { @MainActor in self?.microphone(chunk, level) }
+        }
+        // How loud the helper is at this moment, to judge what comes back through the microphone.
+        speaker.removeTap(onBus: 0)
+        speaker.installTap(onBus: 0, bufferSize: 1024, format: play) { [weak self] buffer, _ in
+            guard let d = buffer.floatChannelData, buffer.frameLength > 0 else { return }
+            var sum: Float = 0
+            for i in 0..<Int(buffer.frameLength) { sum += d[0][i] * d[0][i] }
+            let level = (sum / Float(buffer.frameLength)).squareRoot()
             Task { @MainActor in
-                guard let self, self.state != .speaking, Date() > self.quietUntil else { return }
-                self.sendJSON(["user_audio_chunk": chunk])
+                guard let self else { return }
+                self.playLevel = max(level, self.playLevel * 0.8)
             }
         }
         engine.prepare()
@@ -272,13 +383,20 @@ final class VoiceAgent {
         case "ping":
             if let id = (e["ping_event"] as? [String: Any])?["event_id"] { sendJSON(["type": "pong", "event_id": id]) }
         case "audio":
-            if let b64 = (e["audio_event"] as? [String: Any])?["audio_base_64"] as? String, let data = Data(base64Encoded: b64) { speak(data) }
+            let a = e["audio_event"] as? [String: Any]
+            let number = (a?["event_id"] as? Int) ?? Int.max
+            guard number > cutBelow, Date() > deafUntil else { break }
+            if let b64 = a?["audio_base_64"] as? String, let data = Data(base64Encoded: b64) { speak(data) }
         case "interruption":
-            // The person started talking: stop mid-word.
+            // The service heard the person start talking: stop mid-word, and ignore what is left of that answer.
+            if let n = (e["interruption_event"] as? [String: Any])?["event_id"] as? Int { cutBelow = max(cutBelow, n) }
             speaker.stop(); speaker.play()
             pending = 0
+            preroll = []
+            deafUntil = .distantPast
             state = .listening
         case "user_transcript":
+            deafUntil = .distantPast
             if let t = (e["user_transcription_event"] as? [String: Any])?["user_transcript"] as? String { heard = t }
         case "agent_response":
             if let t = (e["agent_response_event"] as? [String: Any])?["agent_response"] as? String { said = t }
@@ -324,10 +442,15 @@ final class VoiceAgent {
                 let name = (params["name"] as? String) ?? ""
                 let text = (params["arguments_json"] as? String) ?? "{}"
                 let args = ((try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any]) ?? [:]
-                guard Commands.tools.contains(where: { ($0["name"] as? String) == name }) else { throw ServiceError(message: "There is no command called \(name).") }
                 state = .working(name.replacingOccurrences(of: "_", with: " "))
-                let out = try await store.commands.call(name, args)
-                let data = try JSONSerialization.data(withJSONObject: out.json)
+                let json: Any
+                if let ui = try interface(name, args, store) {
+                    json = ui
+                } else {
+                    guard Commands.tools.contains(where: { ($0["name"] as? String) == name }) else { throw ServiceError(message: "There is no command called \(name). Use look to see what is on screen, or menu to press a menu item.") }
+                    json = try await store.commands.call(name, args).json
+                }
+                let data = try JSONSerialization.data(withJSONObject: json)
                 result = String(String(data: data, encoding: .utf8)?.prefix(12000) ?? "")
             case "show_in_app":
                 switch (params["place"] as? String) ?? "" {
@@ -336,7 +459,7 @@ final class VoiceAgent {
                 case "claude": store.showClaude = true
                 case "session": store.showSession()
                 case "room": store.openRoom?()
-                case "master_effects": store.showMaster.toggle()
+                case "master_effects": store.showMaster = true
                 default: throw ServiceError(message: "Unknown place.")
                 }
                 result = "{\"ok\":true}"
@@ -391,6 +514,9 @@ struct VoiceAgentStrip: View {
             }
             .padding(.horizontal, 14).padding(.vertical, 9)
             .glass(in: Capsule())
+            .contentShape(Capsule())
+            .onTapGesture { agent.interrupt() }
+            .help(agent.state == .speaking ? "Click to stop it talking. You can also just talk over it." : "")
             .padding(.top, 10)
             .transition(.move(edge: .top).combined(with: .opacity))
         }

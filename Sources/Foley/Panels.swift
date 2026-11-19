@@ -227,6 +227,9 @@ struct SettingsSheet: View {
     @AppStorage("exportsFolder") private var exportsFolder = ""
     @AppStorage("autosaveSeconds") private var autosave = 0.0
     @AppStorage("hoverHelp") private var hoverHelp = true
+    @AppStorage("voiceAgentVoice") private var helperVoice = ""
+    @AppStorage("voiceAgentVoiceName") private var helperVoiceName = ""
+    @AppStorage("voiceAgentStyle") private var helperStyle = ""
 
     private func folderRow(_ title: String, _ path: String, reset: (() -> Void)?, choose: @escaping () -> Void) -> some View {
         HStack(spacing: 8) {
@@ -276,6 +279,19 @@ struct SettingsSheet: View {
                     Text("WAV 48 kHz").tag("wav_48000")
                 }
             }
+
+            SectionTitle("Voice helper")
+            HStack {
+                Text("Voice").font(.system(size: 12))
+                VoicePicker(current: helperVoiceName.isEmpty ? "ElevenLabs default" : helperVoiceName) { v in
+                    helperVoice = v.id; helperVoiceName = v.name
+                }
+                if !helperVoice.isEmpty { Button("Default") { helperVoice = ""; helperVoiceName = "" }.controlSize(.small) }
+            }
+            TextField("How it should behave (optional). For example: call me Ayan, be brief, joke a little.", text: $helperStyle, axis: .vertical)
+                .textFieldStyle(.roundedBorder).lineLimit(1...3)
+            Text("Changes apply the next time you start the helper. It follows English, Hindi and Bengali by itself. Talk over it, or click its bar, to stop it mid-sentence; on loud speakers speak up or use headphones. The helper lives on your ElevenLabs account as the agent \"mitroley helper\".")
+                .font(.system(size: 11.5)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
 
             SectionTitle("Mixing")
             Picker("Format for new sessions", selection: $defaultFormat) {

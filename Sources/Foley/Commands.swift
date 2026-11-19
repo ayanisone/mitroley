@@ -518,13 +518,18 @@ final class Commands {
             f.origin.y = top - f.size.height
             w.setFrame(f, display: true)
             return CommandResult(json: ["width": w.frame.width, "height": w.frame.height])
+        case "debug_ui":
+            // Not listed as a tool: runs one of the voice helper's interface commands, to check them without talking.
+            let args = (a["arguments"] as? [String: Any]) ?? [:]
+            guard let out = try store.voiceAgent.interface(a.str("name") ?? "", args, store) else { throw CommandError("Not an interface command.") }
+            return CommandResult(json: (out as? [String: Any]) ?? [:])
         case "debug_agent":
             // Not listed as a tool: starts the voice helper for a few seconds and reports how far it got.
             let agent = store.voiceAgent
             if !agent.isOn { agent.toggle(store) }
             try await Task.sleep(nanoseconds: UInt64((a.num("seconds") ?? 8) * 1_000_000_000))
             let out: [String: Any] = ["state": String(describing: agent.state), "problem": agent.problem ?? "", "said": agent.said, "heard": agent.heard,
-                                      "agent_id_saved": UserDefaults.standard.string(forKey: "voiceAgentID") != nil]
+                                      "setup": UserDefaults.standard.string(forKey: "voiceAgentSetup") ?? ""]
             agent.stop()
             return CommandResult(json: out)
         case "debug_switch":
