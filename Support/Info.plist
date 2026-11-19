@@ -14,7 +14,7 @@
     <key>LSApplicationCategoryType</key><string>public.app-category.music</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
-    <key>NSMicrophoneUsageDescription</key><string>mitroley listens when you press the microphone button, to turn what you say into text for Claude.</string>
+    <key>NSMicrophoneUsageDescription</key><string>mitroley listens when you press the microphone or voice helper button, to turn what you say into text or to talk with the helper.</string>
     <key>NSSpeechRecognitionUsageDescription</key><string>mitroley turns what you say into text for the Claude panel.</string>
     <key>NSHumanReadableCopyright</key><string>Made by Ayan Mitra. © 2026 Ayan Mitra. All rights reserved.</string>
     <key>UTExportedTypeDeclarations</key>

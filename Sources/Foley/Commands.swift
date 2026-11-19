@@ -509,6 +509,15 @@ final class Commands {
                                         "doc": [doc.frame.width, doc.frame.height],
                                         "fitting": [doc.intrinsicContentSize.width, doc.intrinsicContentSize.height],
                                         "floating": sv.subviews.map { String(describing: type(of: $0)) }])
+        case "debug_agent":
+            // Not listed as a tool: starts the voice helper for a few seconds and reports how far it got.
+            let agent = store.voiceAgent
+            if !agent.isOn { agent.toggle(store) }
+            try await Task.sleep(nanoseconds: UInt64((a.num("seconds") ?? 8) * 1_000_000_000))
+            let out: [String: Any] = ["state": String(describing: agent.state), "problem": agent.problem ?? "", "said": agent.said, "heard": agent.heard,
+                                      "agent_id_saved": UserDefaults.standard.string(forKey: "voiceAgentID") != nil]
+            agent.stop()
+            return CommandResult(json: out)
         case "debug_switch":
             // Not listed as a tool: switches through the cuts of this film and back, and reports how long each switch held the main thread.
             let home = store.folder

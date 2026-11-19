@@ -51,6 +51,7 @@ struct MainView: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 RoomButton()
+                VoiceAgentButton()
                 Button { store.showClaude.toggle() } label: {
                     Label("Claude", systemImage: "sparkle")
                 }
@@ -65,6 +66,7 @@ struct MainView: View {
                 .help("API keys and models (⌘,)")
             }
         }
+        .overlay(alignment: .top) { VoiceAgentStrip().animation(Motion.ui(reduceMotion), value: store.voiceAgent.isOn) }
         .overlay(alignment: .top) {
             if let toast = store.toast {
                 Text(toast.text)
@@ -86,6 +88,7 @@ struct MainView: View {
         .sheet(isPresented: $store.showExport) { ExportSheet().environment(store) }
         .sheet(isPresented: $store.showSettings) { SettingsSheet().environment(store) }
         // Icons only, and no "Icon and Text" choice to fall into: it also overrides a mode saved by an earlier launch.
+        .background(RoomOpener())
         .background(WindowAccessor { w in
             TitleBarDoubleClick.install()
             guard let bar = w.toolbar else { return }

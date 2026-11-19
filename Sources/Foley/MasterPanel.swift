@@ -5,10 +5,9 @@ import SwiftUI
 /// The output meter in the transport bar. Click it for the master bus: compressor, limiter and loudness.
 struct MasterMeter: View {
     @Environment(Store.self) private var store
-    @State private var open = false
-
     var body: some View {
-        Button { open.toggle() } label: {
+        @Bindable var store = store
+        Button { store.showMaster.toggle() } label: {
             HStack(spacing: 8) {
                 VStack(spacing: 3) {
                     bar(store.player.masterL)
@@ -21,7 +20,7 @@ struct MasterMeter: View {
         }
         .buttonStyle(PressStyle(scale: 0.97))
         .help("Output level and integrated loudness. Click for the master effects rack.")
-        .popover(isPresented: $open, arrowEdge: .top) {
+        .popover(isPresented: $store.showMaster, arrowEdge: .top) {
             MasterPanel().environment(store)
         }
     }

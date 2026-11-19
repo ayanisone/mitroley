@@ -247,12 +247,15 @@ struct GlassSegments<T: Hashable>: View {
     @State private var drag: CGFloat?
     @State private var speed: CGFloat = 0
     @State private var pressed = false
+    /// The choice just made, shown at once; the change itself waits until the drop has landed, so heavy work
+    /// (opening another cut) cannot freeze it half way.
+    @State private var chosen: Int?
 
     private func centre(_ i: Int) -> CGFloat { CGFloat(i) * cell + cell / 2 }
     private func index(at x: CGFloat) -> Int { min(options.count - 1, max(0, Int((x / cell).rounded(.down)))) }
 
     var body: some View {
-        let selected = options.firstIndex { $0.value == selection } ?? 0
+        let selected = chosen ?? (options.firstIndex { $0.value == selection } ?? 0)
         let last = centre(max(0, options.count - 1))
         let x = drag.map { min(last, max(cell / 2, $0)) } ?? centre(selected)
         let under = drag == nil ? selected : index(at: x)
@@ -290,7 +293,14 @@ struct GlassSegments<T: Hashable>: View {
                 speed = 0
                 pressed = false
                 drag = nil
-                if options[i].value != selection { select(options[i].value) }
+                guard options[i].value != selection else { return }
+                chosen = i
+                let value = options[i].value
+                DispatchQueue.main.asyncAfter(deadline: .now() + (reduceMotion ? 0.05 : 0.3)) {
+                    select(value)
+                    // Let go once the real selection has caught up.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { chosen = nil }
+                }
             })
         // The drop is 4 pt narrower than its cell, so 1 pt at the sides and 3 pt above and below leave the same
         // 3 pt of bar showing all the way round it, at either end.

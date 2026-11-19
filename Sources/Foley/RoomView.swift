@@ -92,6 +92,24 @@ struct RoomView: View {
                         }
                         .buttonStyle(PressStyle(scale: 0.92))
                         .help("Reset the view (double-click the room)")
+                        Menu {
+                            ForEach(MixFormat.allCases) { f in
+                                Toggle(isOn: Binding(get: { f == store.project.format }, set: { if $0 { store.setFormat(f) } })) {
+                                    Text(f.title)
+                                    Text(f.detail)
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(store.project.format.title).font(.system(size: 11.5, weight: .semibold))
+                                Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(Theme.tertiary)
+                            }
+                            .foregroundStyle(Color.white)
+                            .padding(.horizontal, 10).frame(height: 24)
+                            .background(Color.white.opacity(0.08), in: Capsule())
+                        }
+                        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                        .help("What the session is mixed for. It decides which speakers and meters are shown here: Stereo and Binaural have two, 5.1 has six, 7.1.4 has twelve.")
                         SegmentedPill(options: [(RoomScene.Camera.threeQuarter, "3D"), (.front, "Front"), (.top, "Top"), (.side, "Side")],
                                       selection: view, segmentWidth: 52, height: 24, size: 11.5) { view = $0; viewTick += 1 }
                         Button { pinned.toggle() } label: {
@@ -121,11 +139,13 @@ struct RoomView: View {
                             meterHeight = min(460, max(130, (meterStart ?? meterHeight) - Double(g.translation.height)))
                         }
                         .onEnded { _ in meterStart = nil }))
-            HStack(alignment: .bottom, spacing: 0) {
+            HStack(alignment: .top, spacing: 0) {
                 ChannelMeters(levels: channels, format: store.project.format)
                 Rectangle().fill(Theme.line).frame(width: 1)
-                RoomLoudness()
+                // Scrolls when the strip is short, so it never spills up over the room.
+                ScrollView { RoomLoudness() }
                     .frame(width: 216)
+                    .frame(maxHeight: .infinity, alignment: .top)
                 Rectangle().fill(Theme.line).frame(width: 1)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 6) {
@@ -149,6 +169,7 @@ struct RoomView: View {
                 .frame(width: 280)
             }
             .frame(height: meterHeight)
+            .clipped()
             .background(Theme.panel)
         }
         .background(Theme.bg)
@@ -192,7 +213,9 @@ struct ChannelMeters: View {
         HStack(alignment: .top, spacing: 14) {
             // The scale.
             GeometryReader { geo in
-                ForEach(Self.marks, id: \.self) { m in
+                // Fewer numbers when the meter is short, so they never run into each other.
+                let marks: [Double] = geo.size.height > 150 ? Self.marks : geo.size.height > 90 ? [0, -12, -30, -54] : [0, -54]
+                ForEach(marks, id: \.self) { m in
                     Text(m == 0 ? "0" : String(format: "%.0f", m))
                         .font(.system(size: 8.5, weight: .medium).monospacedDigit()).foregroundStyle(Theme.tertiary)
                         .frame(width: 22, alignment: .trailing)
@@ -604,5 +627,15 @@ struct RoomButton: View {
                 .help("Room: see where every spatial object is and how it moves (⌘R)")
                 .onAppear { if CommandLine.arguments.contains("--room") { openWindow(id: "room") } }
         }
+    }
+}
+
+/// Lets the store open the Room window (for the voice helper). Lives inside the main window, where the store is available.
+struct RoomOpener: View {
+    @Environment(\.openWindow) private var openWindow
+    @Environment(Store.self) private var store
+    var body: some View {
+        Color.clear.frame(width: 0, height: 0)
+            .onAppear { store.openRoom = { openWindow(id: "room") } }
     }
 }

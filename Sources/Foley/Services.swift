@@ -205,6 +205,9 @@ enum ElevenLabs {
 
     // MARK: Voices
 
+    /// A request to ElevenLabs carrying the saved key.
+    static func request(_ url: String, method: String = "GET") throws -> URLRequest { try authed(url, method: method) }
+
     private static func authed(_ url: String, method: String = "GET") throws -> URLRequest {
         guard let key = Secrets.get(.elevenLabs) else { throw ServiceError(message: "Add your ElevenLabs API key in Settings.") }
         if let problem = Secrets.problem(key) { throw ServiceError(message: "ElevenLabs key: " + problem) }

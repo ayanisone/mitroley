@@ -125,11 +125,14 @@ struct VoiceSettings: Codable, Equatable {
     var speed = 1.0                         // 0.7…1.2
     var boost = true                        // speaker boost
 
-    static let models = [("eleven_v3", "Eleven v3 (most expressive)"), ("eleven_multilingual_v2", "Multilingual v2"),
+    static let models = [("eleven_v4", "Eleven v4"), ("eleven_v4_turbo", "Eleven v4 Turbo (fast)"), ("eleven_v3", "Eleven v3 (most expressive)"), ("eleven_multilingual_v2", "Multilingual v2"),
                          ("eleven_turbo_v2_5", "Turbo v2.5 (fast)"), ("eleven_flash_v2_5", "Flash v2.5 (fastest)")]
 }
 
 struct VoiceOverSection: View {
+    /// Name, low cut, high cut.
+    static let filters: [(String, Double, Double)] = [("None", 20, 20000), ("Phone", 300, 3400), ("Radio", 500, 5000),
+                                                      ("Behind a wall", 20, 1100), ("Thin", 450, 20000), ("Warm", 20, 6500)]
     @Environment(Store.self) private var store
     let track: Track
     @State private var text = ""
@@ -181,6 +184,44 @@ struct VoiceOverSection: View {
             .disabled(working || id.isEmpty || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button("Import…") { Panels.importAudio(store, track: track.id) }.buttonStyle(PillButtonStyle())
         }
+        SectionTitle("Audio effects")
+        Menu {
+            ForEach(VoiceOverSection.filters, id: \.0) { f in
+                Button(f.0) { store.mutate { p in if let i = p.trackIndex(track.id) { p.tracks[i].lowCut = f.1; p.tracks[i].highCut = f.2 } } }
+            }
+        } label: {
+            Text("Filter: " + (VoiceOverSection.filters.first { abs($0.1 - track.lowCut) < 1 && abs($0.2 - track.highCut) < 1 }?.0 ?? "Custom"))
+        }
+        Menu {
+            Button("None") { store.mutate { p in if let i = p.trackIndex(track.id) { p.tracks[i].spaceMode = .dry } } }
+            Button("Whichever scene is playing") { store.mutate { p in if let i = p.trackIndex(track.id) { p.tracks[i].spaceMode = .follow } } }
+            Divider()
+            ForEach(store.project.spaces) { sp in
+                Button(sp.name) { store.mutate { p in if let i = p.trackIndex(track.id) { p.tracks[i].spaceMode = .fixed; p.tracks[i].fixedSpace = sp.id } } }
+            }
+            Divider()
+            ForEach(SpaceTemplate.all) { t in
+                Button("New: \(t.name)") {
+                    let id = store.addSpace(from: t)
+                    store.mutate { p in if let i = p.trackIndex(track.id) { p.tracks[i].spaceMode = .fixed; p.tracks[i].fixedSpace = id } }
+                }
+            }
+        } label: {
+            Text("Space: " + (track.spaceMode == .dry ? "None" : track.spaceMode == .follow ? "The scene's" : store.project.space(track.fixedSpace)?.name ?? "Choose"))
+        }
+        Field(title: "Distance", value: String(format: "%.0f%%", (track.distance ?? 0) * 100)) {
+            Slide(value: track.distance ?? 0, range: 0...1, tint: track.kind.color, reset: 0, begin: { store.beginGesture() }) { v in
+                // Further away: quieter, duller, and more of the room.
+                store.live { p in
+                    guard let i = p.trackIndex(track.id) else { return }
+                    p.tracks[i].distance = v < 0.01 ? nil : v
+                    p.tracks[i].volume = -14 * v
+                    p.tracks[i].highCut = 20000 * pow(2500.0 / 20000, v)
+                    if p.tracks[i].spaceMode != .dry { p.tracks[i].send = min(1, 0.25 + 0.75 * v) }
+                }
+            }
+        }
+        Caption("Filter shapes the voice (phone, radio, behind a wall). Space puts it in a room. Distance makes it quieter, duller and roomier as it goes up. They apply to every line on this track.")
         if store.project.video != nil {
             Button("Transcribe the Film's Voices") {
                 Task {

@@ -342,6 +342,7 @@ struct Track: Codable, Equatable, Identifiable {
     var lane: AutoParam?            // automation lane shown under the track
     var groupID: UUID?              // the group this track belongs to, if any
     var height: Double?             // lane height in points, nil = standard
+    var distance: Double?           // voice effect: 0…1 how far away the voice sounds
     var plugins: [PluginSlot]?      // Audio Unit effects on this track, in order
     var duck: Duck?                 // music only: dips under voice; nil = off
     var lfe: Double?                // 0…1 how much of the track's low end also goes to the sub (immersive exports)

@@ -510,6 +510,12 @@ final class Store {
     var versionList: [URL] = []
     /// Footfalls tapped in by hand (T while playing), waiting to be placed on `tapTrack`.
     var voices: [Voice] = []
+    /// The helper you talk to.
+    @ObservationIgnored let voiceAgent = VoiceAgent()
+    /// Set by the toolbar: opens the Room window.
+    @ObservationIgnored var openRoom: (() -> Void)?
+    /// Whether the master effects rack is showing.
+    var showMaster = false
     /// Speech models the ElevenLabs account offers: (id, name). Empty until asked for.
     var voiceModels: [(id: String, name: String)] = []
     /// The track a dragged clip is hovering over.
