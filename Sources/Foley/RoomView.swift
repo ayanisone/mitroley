@@ -129,61 +129,22 @@ struct RoomView: View {
                                       : "Drag to look around · pinch or scroll to zoom · double-click to reset")
                         .font(.system(size: 11.5)).foregroundStyle(Theme.tertiary).padding(14)
                 }
-            // Drag this line to give the meters more or less room.
-            Rectangle().fill(Theme.line).frame(height: 1)
-                .overlay(Rectangle().fill(Color.clear).frame(height: 10).contentShape(Rectangle())
-                    .onHover { $0 ? NSCursor.resizeUpDown.push() : NSCursor.pop() }
-                    .gesture(DragGesture(minimumDistance: 0)
-                        .onChanged { g in
-                            if meterStart == nil { meterStart = meterHeight }
-                            meterHeight = min(460, max(130, (meterStart ?? meterHeight) - Double(g.translation.height)))
-                        }
-                        .onEnded { _ in meterStart = nil }))
-            HStack(alignment: .top, spacing: 0) {
-                // The meters keep their full width; in a narrow window the lists beside them give way, and if there is
-                // still not room they scroll sideways from the left, so the first speaker is never cut off.
-                ScrollView(.horizontal, showsIndicators: false) {
-                    ChannelMeters(levels: channels, format: store.project.format)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .frame(maxHeight: .infinity)
-                }
-                .frame(maxWidth: .infinity)
-                .layoutPriority(1)
-                Rectangle().fill(Theme.line).frame(width: 1)
-                // Scrolls when the strip is short, so it never spills up over the room.
-                ScrollView { RoomLoudness() }
-                    .frame(width: 196)
-                    .frame(maxHeight: .infinity, alignment: .top)
-                Rectangle().fill(Theme.line).frame(width: 1)
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(list) { d in
-                            Button { store.selection = .track(d.id) } label: {
-                                HStack(spacing: 7) {
-                                    Circle().fill(Color(nsColor: d.color).opacity(d.silent ? 0.35 : 1)).frame(width: 8, height: 8)
-                                    Text(d.name).font(.system(size: 12, weight: selected == d.id ? .semibold : .regular))
-                                        .foregroundStyle(d.silent ? Theme.tertiary : Color.white).lineLimit(1)
-                                    Spacer(minLength: 6)
-                                    // The position, when there is room for it on one line; the name alone otherwise.
-                                    ViewThatFits(in: .horizontal) {
-                                        Text(String(format: "%+.2f  %+.2f  %.2f", d.now.x, d.now.y, d.now.z))
-                                            .font(.system(size: 10.5).monospacedDigit()).foregroundStyle(Theme.tertiary)
-                                            .lineLimit(1).fixedSize()
-                                        Color.clear.frame(width: 0, height: 0)
-                                    }
+            RoomStrip(levels: channels, dots: list, selected: selected)
+                .frame(height: meterHeight)
+                .clipped()
+                .background(Theme.panel)
+                // Drag the top edge to give the strip more or less room.
+                .overlay(alignment: .top) {
+                    Rectangle().fill(Theme.line).frame(height: 1)
+                        .overlay(Rectangle().fill(Color.clear).frame(height: 10).contentShape(Rectangle())
+                            .onHover { $0 ? NSCursor.resizeUpDown.push() : NSCursor.pop() }
+                            .gesture(DragGesture(minimumDistance: 0)
+                                .onChanged { g in
+                                    if meterStart == nil { meterStart = meterHeight }
+                                    meterHeight = min(420, max(140, (meterStart ?? meterHeight) - Double(g.translation.height)))
                                 }
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(PressStyle(scale: 0.97))
-                        }
-                    }
-                    .padding(14)
+                                .onEnded { _ in meterStart = nil }))
                 }
-                .frame(minWidth: 150, maxWidth: 280)
-            }
-            .frame(height: meterHeight)
-            .clipped()
-            .background(Theme.panel)
         }
         .background(Theme.bg)
         .frame(minWidth: 820, minHeight: 560)
@@ -197,65 +158,129 @@ struct RoomView: View {
     }
 }
 
+/// The strip under the room: meters, loudness, and the list of sounds. Three columns with one rule each, so it holds
+/// together at any size: the two side columns have a width you can drag, and the meters take what is left and
+/// space themselves evenly inside it.
+struct RoomStrip: View {
+    @Environment(Store.self) private var store
+    let levels: [Double]
+    let dots: [RoomDot]
+    let selected: UUID?
+    @AppStorage("roomLoudnessWidth") private var loudnessWidth = 190.0
+    @AppStorage("roomListWidth") private var listWidth = 170.0
+    @State private var dragStart: Double?
+    private static let pad: CGFloat = 14
+
+    var body: some View {
+        GeometryReader { geo in
+            // The meters never get less than 280 pt; the side columns give way first.
+            let room = max(0, geo.size.width - 280 - 2)
+            let loud = min(CGFloat(loudnessWidth), max(140, room * 0.55))
+            let list = min(CGFloat(listWidth), max(110, room - loud))
+            HStack(spacing: 0) {
+                ChannelMeters(levels: levels, format: store.project.format)
+                    .padding(Self.pad)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                divider { loudnessWidth = min(340, max(140, $0)) } current: { loudnessWidth }
+                RoomLoudness()
+                    .padding(Self.pad)
+                    .frame(width: loud)
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .clipped()
+                divider { listWidth = min(340, max(110, $0)) } current: { listWidth }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 7) {
+                        ForEach(dots) { d in
+                            Button { store.selection = .track(d.id) } label: {
+                                HStack(spacing: 7) {
+                                    Circle().fill(Color(nsColor: d.color).opacity(d.silent ? 0.35 : 1)).frame(width: 8, height: 8)
+                                    Text(d.name).font(.system(size: 12, weight: selected == d.id ? .semibold : .regular))
+                                        .foregroundStyle(d.silent ? Theme.tertiary : Color.white).lineLimit(1)
+                                    Spacer(minLength: 0)
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(PressStyle(scale: 0.97))
+                            .help(String(format: "Left–right %+.2f, depth %+.2f, height %.2f", d.now.x, d.now.y, d.now.z))
+                        }
+                    }
+                    .padding(Self.pad)
+                }
+                .frame(width: list)
+            }
+        }
+    }
+
+    /// A line between two columns. Dragging it left makes the column on its right wider.
+    private func divider(set: @escaping (Double) -> Void, current: @escaping () -> Double) -> some View {
+        Rectangle().fill(Theme.line).frame(width: 1)
+            .overlay(Rectangle().fill(Color.clear).frame(width: 10).contentShape(Rectangle())
+                .onHover { $0 ? NSCursor.resizeLeftRight.push() : NSCursor.pop() }
+                .gesture(DragGesture(minimumDistance: 0)
+                    .onChanged { g in
+                        if dragStart == nil { dragStart = current() }
+                        set((dragStart ?? current()) - Double(g.translation.width))
+                    }
+                    .onEnded { _ in dragStart = nil }))
+    }
+}
+
 /// One meter per speaker of the session's format, on a dB scale, with a peak marker that holds for a moment.
+/// The bars share the width they are given equally, so they are always centred and never cut off.
 struct ChannelMeters: View {
     let levels: [Double]
     var format = MixFormat.atmos714
-    /// Highest recent level per channel, and when it was reached.
     @State private var holds = [Double](repeating: 0, count: 12)
     @State private var heldAt = [Date](repeating: .distantPast, count: 12)
 
     private static let floor = -54.0
-    private static let marks: [Double] = [0, -6, -12, -20, -30, -40, -54]
     private static let green = Color(red: 0.36, green: 0.82, blue: 0.32)
     private static let yellow = Color(red: 0.93, green: 0.78, blue: 0.2)
     private static let orange = Color(red: 0.96, green: 0.52, blue: 0.16)
+    /// Left to right, with a wider gap wherever the group changes (front, side, rear, overhead, sub).
+    private static let order: [(channel: Int, group: Int)] = [(0, 0), (2, 0), (1, 0), (6, 1), (7, 1), (4, 2), (5, 2), (8, 3), (9, 3), (10, 3), (11, 3), (3, 4)]
 
-    private var groups: [(String, [Int])] {
-        let all: [(String, [Int])] = [("Front", [0, 2, 1]), (format == .surround51 ? "Surround" : "Side", [6, 7]), ("Rear", [4, 5]), ("Overhead", [8, 9, 10, 11]), ("Sub", [3])]
-        let has = Set(format.channels)
-        return all.map { ($0.0, $0.1.filter(has.contains)) }.filter { !$0.1.isEmpty }
-    }
     private func name(_ c: Int) -> String {
         format == .surround51 && c == 6 ? "Ls" : format == .surround51 && c == 7 ? "Rs" : Speakers.names[c]
     }
-    /// 0…1 up the meter for a level in dB.
     private static func unit(_ db: Double) -> CGFloat { CGFloat(min(1, max(0, (db - floor) / -floor))) }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 9) {
-            // The scale.
-            GeometryReader { geo in
-                // Fewer numbers when the meter is short, so they never run into each other.
-                let marks: [Double] = geo.size.height > 150 ? Self.marks : geo.size.height > 90 ? [0, -12, -30, -54] : [0, -54]
-                ForEach(marks, id: \.self) { m in
-                    Text(m == 0 ? "0" : String(format: "%.0f", m))
-                        .font(.system(size: 8.5, weight: .medium).monospacedDigit()).foregroundStyle(Theme.tertiary)
-                        .frame(width: 22, alignment: .trailing)
-                        .position(x: 11, y: geo.size.height * (1 - Self.unit(m)))
-                }
-            }
-            .frame(width: 22)
-            .padding(.bottom, 34)
-            ForEach(groups, id: \.0) { group in
-                VStack(spacing: 6) {
-                    HStack(alignment: .bottom, spacing: 3) {
-                        ForEach(group.1, id: \.self) { c in
-                            VStack(spacing: 5) {
-                                bar(c)
-                                Text(name(c)).font(.system(size: 10, weight: .semibold).monospacedDigit())
-                                    .foregroundStyle(levels[c] > 0.02 ? Color.white : Theme.tertiary)
-                                    .frame(width: 26)
-                            }
-                        }
+        GeometryReader { geo in
+            let has = Set(format.channels)
+            let shown = Self.order.filter { has.contains($0.channel) }
+            let groups = Set(shown.map(\.group)).count
+            let scale: CGFloat = 26, gap: CGFloat = 12, label: CGFloat = 18
+            // Each speaker gets an equal cell, at most 44 pt wide, and the whole row is centred.
+            let cell = min(44, max(10, (geo.size.width - scale - gap * CGFloat(max(0, groups - 1))) / CGFloat(max(1, shown.count))))
+            let bar = min(14, max(4, cell * 0.4))
+            let height = max(20, geo.size.height - label)
+            let marks: [Double] = height > 150 ? [0, -6, -12, -20, -30, -40, -54] : height > 80 ? [0, -12, -30, -54] : [0, -54]
+            HStack(alignment: .top, spacing: 0) {
+                ZStack(alignment: .topTrailing) {
+                    ForEach(marks, id: \.self) { m in
+                        Text(String(format: "%.0f", m))
+                            .font(.system(size: 8.5, weight: .medium).monospacedDigit()).foregroundStyle(Theme.tertiary)
+                            .frame(width: scale - 6, height: 10, alignment: .trailing)
+                            .offset(y: min(height - 10, max(0, height * (1 - Self.unit(m)) - 5)))
                     }
-                    Text(group.0.uppercased()).font(.system(size: 9, weight: .semibold)).tracking(0.6).foregroundStyle(Theme.tertiary)
+                }
+                .frame(width: scale, height: height, alignment: .topLeading)
+                ForEach(Array(shown.enumerated()), id: \.element.channel) { i, s in
+                    VStack(spacing: 0) {
+                        meter(s.channel, width: bar, height: height)
+                        Text(cell >= 17 ? name(s.channel) : "")
+                            .font(.system(size: cell >= 26 ? 10 : 8.5, weight: .semibold))
+                            .foregroundStyle(levels[s.channel] > 0.02 ? Color.white : Theme.tertiary)
+                            .lineLimit(1).fixedSize()
+                            .frame(width: cell, height: label, alignment: .bottom)
+                    }
+                    .frame(width: cell)
+                    .padding(.leading, i > 0 && shown[i - 1].group != s.group ? gap : 0)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 12)
-        .frame(maxHeight: .infinity)
         .onChange(of: levels) { _, now in
             let t = Date()
             for c in 0..<min(12, now.count) {
@@ -263,34 +288,29 @@ struct ChannelMeters: View {
                 else if t.timeIntervalSince(heldAt[c]) > 1.2 { holds[c] = max(now[c], holds[c] - 0.02) }
             }
         }
-        .help("How much signal each speaker of this session's format is getting right now, in dB below full scale, worked out with the same panner and fold-downs the exports use. The small bar is the highest level of the last second or so.")
+        .help("How much signal each speaker of this session's format is getting, in dB below full scale, worked out with the same panner and fold-downs the exports use. The small bar is the highest level of the last second or so.")
     }
 
-    private func bar(_ c: Int) -> some View {
-        GeometryReader { geo in
-            let h = geo.size.height
-            let level = CGFloat(levels[c]), hold = CGFloat(holds[c])
-            let y20 = h * (1 - Self.unit(-20)), y6 = h * (1 - Self.unit(-6))
-            ZStack(alignment: .bottom) {
-                // The dim track shows the zones; the bright fill shows the signal.
-                zones(h: h, y20: y20, y6: y6).opacity(0.22)
-                zones(h: h, y20: y20, y6: y6)
-                    .mask(alignment: .bottom) { Rectangle().frame(height: max(0, h * level)) }
-                if hold > 0.02 {
-                    let db = Double(hold) * -Self.floor + Self.floor
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(db > -6 ? Self.orange : db > -20 ? Self.yellow : Self.green)
-                        .frame(height: 3)
-                        .offset(y: -(h * hold - 1.5))
-                }
+    private func meter(_ c: Int, width: CGFloat, height h: CGFloat) -> some View {
+        let level = CGFloat(levels[c]), hold = CGFloat(holds[c])
+        let y20 = h * (1 - Self.unit(-20)), y6 = h * (1 - Self.unit(-6))
+        return ZStack(alignment: .bottom) {
+            zones(y20: y20, y6: y6).opacity(0.22)
+            zones(y20: y20, y6: y6).mask(alignment: .bottom) { Rectangle().frame(height: max(0, h * level)) }
+            if hold > 0.02 {
+                let db = Double(hold) * -Self.floor + Self.floor
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(db > -6 ? Self.orange : db > -20 ? Self.yellow : Self.green)
+                    .frame(height: 3)
+                    .offset(y: -(h * hold - 1.5))
             }
-            .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-            .animation(.linear(duration: 0.06), value: level)
         }
-        .frame(width: 13)
+        .frame(width: width, height: h)
+        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+        .animation(.linear(duration: 0.06), value: level)
     }
 
-    private func zones(h: CGFloat, y20: CGFloat, y6: CGFloat) -> some View {
+    private func zones(y20: CGFloat, y6: CGFloat) -> some View {
         VStack(spacing: 0) {
             Rectangle().fill(Self.orange).frame(height: max(0, y6))
             Rectangle().fill(Self.yellow).frame(height: max(0, y20 - y6))
@@ -300,6 +320,7 @@ struct ChannelMeters: View {
 }
 
 /// Loudness in the Room window: what you are hearing now, and the full mix in each format once measured.
+/// Kept to one number, one line and one button; the rest is in the master effects' loudness meter.
 struct RoomLoudness: View {
     @Environment(Store.self) private var store
     @State private var measuring = false
@@ -308,50 +329,33 @@ struct RoomLoudness: View {
 
     var body: some View {
         let m = store.player.loudness
-        VStack(alignment: .leading, spacing: 8) {
-            Text(store.player.monitor == .spatial ? "YOU HEAR · BINAURAL" : "YOU HEAR · STEREO")
-                .font(.system(size: 9, weight: .semibold)).tracking(0.6).foregroundStyle(Theme.tertiary)
+        VStack(alignment: .leading, spacing: 6) {
+            Text(store.player.monitor == .spatial ? "BINAURAL" : "STEREO")
+                .font(.system(size: 9, weight: .semibold)).tracking(0.8).foregroundStyle(Theme.tertiary)
             HStack(alignment: .firstTextBaseline, spacing: 5) {
-                Text(m.integrated.map { String(format: "%.1f", $0) } ?? "–.–")
-                    .font(.system(size: 24, weight: .medium, design: .rounded).monospacedDigit())
+                Text(m.integrated.map { String(format: "%.1f", $0) } ?? "–")
+                    .font(.system(size: 26, weight: .medium, design: .rounded).monospacedDigit())
+                    .lineLimit(1).minimumScaleFactor(0.6)
                 Text("LUFS").font(.system(size: 9.5, weight: .semibold)).foregroundStyle(Theme.tertiary)
             }
-            HStack(spacing: 10) {
-                value("Moment", m.momentary)
-                value("Short", m.shortTerm)
-                value("Peak", m.truePeak)
-            }
-            Rectangle().fill(Theme.line).frame(height: 1)
-            HStack {
-                Text("FULL MIX").font(.system(size: 9, weight: .semibold)).tracking(0.6).foregroundStyle(Theme.tertiary)
-                Spacer()
-                Button(measuring ? "Measuring" : "Measure") { measure() }.buttonStyle(PillButtonStyle()).disabled(measuring)
-            }
-            if let problem { Text(problem).font(.system(size: 10.5)).foregroundStyle(Theme.danger).lineLimit(3) }
-            if rows.isEmpty && problem == nil {
-                Text("Renders the session and reads the loudness of the 7.1.4 (what an Atmos renderer plays), the 5.1 and the stereo versions.")
-                    .font(.system(size: 10.5)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
-            }
+            Text(m.truePeak.map { String(format: "Peak %.1f dBTP", $0) } ?? "Peak –")
+                .font(.system(size: 11).monospacedDigit()).foregroundStyle(Theme.secondary).lineLimit(1)
+            Button(measuring ? "Measuring" : "Measure full mix") { measure() }
+                .buttonStyle(PillButtonStyle()).disabled(measuring)
+                .padding(.top, 4)
+                .help("Renders the session and reads the loudness of the 7.1.4 (what an Atmos renderer plays), the 5.1 and the stereo versions. Takes about as long as an export.")
+            if let problem { Text(problem).font(.system(size: 10.5)).foregroundStyle(Theme.danger).lineLimit(2) }
             ForEach(rows) { r in
-                HStack {
-                    Text(r.name).font(.system(size: 11)).lineLimit(1)
-                    Spacer(minLength: 4)
-                    Text(r.lufs.map { String(format: "%.1f", $0) } ?? "silent").font(.system(size: 11, weight: .semibold).monospacedDigit())
-                    Text(String(format: "%.1f", r.truePeak)).font(.system(size: 10.5).monospacedDigit()).foregroundStyle(Theme.tertiary)
-                        .frame(width: 34, alignment: .trailing)
+                HStack(spacing: 6) {
+                    Text(r.name).font(.system(size: 11)).foregroundStyle(Theme.secondary).lineLimit(1)
+                    Spacer(minLength: 2)
+                    Text(r.lufs.map { String(format: "%.1f", $0) } ?? "–").font(.system(size: 11, weight: .semibold).monospacedDigit()).fixedSize()
                 }
             }
             Spacer(minLength: 0)
         }
-        .padding(12)
-        .help("Left number: integrated loudness in LUFS. Right number: true peak in dBTP. The top reading follows playback; reset it from the master effects' loudness meter.")
-    }
-
-    private func value(_ title: String, _ v: Double?) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(v.map { String(format: "%.1f", $0) } ?? "–").font(.system(size: 11.5, weight: .medium).monospacedDigit())
-            Text(title.uppercased()).font(.system(size: 7.5, weight: .semibold)).tracking(0.5).foregroundStyle(Theme.tertiary)
-        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .help("Integrated loudness of what you are hearing, in LUFS, and its true peak. Momentary and short-term readings are in the master effects' loudness meter.")
     }
 
     private func measure() {

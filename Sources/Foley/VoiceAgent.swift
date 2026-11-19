@@ -16,8 +16,8 @@ final class VoiceAgent {
 
     @ObservationIgnored private weak var store: Store?
     @ObservationIgnored private var socket: URLSessionWebSocketTask?
-    @ObservationIgnored private let engine = AVAudioEngine()
-    @ObservationIgnored private let speaker = AVAudioPlayerNode()
+    @ObservationIgnored private var engine = AVAudioEngine()
+    @ObservationIgnored private var speaker = AVAudioPlayerNode()
     @ObservationIgnored private var converter: AVAudioConverter?
     @ObservationIgnored private let wire = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true)!
     @ObservationIgnored private let play = AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 1)!
@@ -176,6 +176,9 @@ final class VoiceAgent {
         engine.inputNode.removeTap(onBus: 0)
         speaker.stop()
         engine.stop()
+        // A fresh engine for next time, so echo cancelling is negotiated from a clean start.
+        engine = AVAudioEngine()
+        speaker = AVAudioPlayerNode()
         pending = 0
         state = .off
     }
@@ -189,15 +192,22 @@ final class VoiceAgent {
         // First with the Mac's echo canceller, so the helper does not hear its own voice from the speakers. Some audio
         // set-ups refuse it; then carry on without, where headphones avoid the echo.
         do { try startAudio(echoCancelling: true) } catch {
+            // Start again from nothing: an engine that failed with echo cancelling on does not always recover.
             engine.stop()
-            engine.inputNode.removeTap(onBus: 0)
-            try startAudio(echoCancelling: false)
+            engine = AVAudioEngine()
+            speaker = AVAudioPlayerNode()
+            do { try startAudio(echoCancelling: false) } catch {
+                engine = AVAudioEngine()
+                speaker = AVAudioPlayerNode()
+                throw ServiceError(message: "The microphone could not be started (\(error.localizedDescription)). Check that a microphone is chosen in System Settings › Sound › Input, and that no other app is holding it.")
+            }
         }
     }
 
     private func startAudio(echoCancelling: Bool) throws {
         let input = engine.inputNode
-        if input.isVoiceProcessingEnabled != echoCancelling { try input.setVoiceProcessingEnabled(echoCancelling) }
+        // Only ever switched on: a new engine starts with it off, and switching it off again is what fails on some set-ups.
+        if echoCancelling { try input.setVoiceProcessingEnabled(true) }
         if speaker.engine == nil { engine.attach(speaker) }
         engine.connect(speaker, to: engine.mainMixerNode, format: play)
         // Read after switching echo cancelling: it changes the microphone's format.

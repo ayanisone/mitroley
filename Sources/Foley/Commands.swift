@@ -509,6 +509,15 @@ final class Commands {
                                         "doc": [doc.frame.width, doc.frame.height],
                                         "fitting": [doc.intrinsicContentSize.width, doc.intrinsicContentSize.height],
                                         "floating": sv.subviews.map { String(describing: type(of: $0)) }])
+        case "debug_frame":
+            // Not listed as a tool: sets the size of a window by its title, to check layouts at different sizes.
+            guard let w = NSApp.windows.first(where: { $0.title == (a.str("window") ?? "Room") }) else { return CommandResult(json: ["found": false]) }
+            var f = w.frame
+            let top = f.maxY
+            f.size = NSSize(width: a.num("width") ?? Double(f.width), height: a.num("height") ?? Double(f.height))
+            f.origin.y = top - f.size.height
+            w.setFrame(f, display: true)
+            return CommandResult(json: ["width": w.frame.width, "height": w.frame.height])
         case "debug_agent":
             // Not listed as a tool: starts the voice helper for a few seconds and reports how far it got.
             let agent = store.voiceAgent
