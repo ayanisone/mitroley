@@ -185,7 +185,7 @@ struct RoomStrip: View {
                 RoomLoudness()
                     .padding(Self.pad)
                     .frame(width: loud)
-                    .frame(maxHeight: .infinity, alignment: .top)
+                    .frame(maxHeight: .infinity, alignment: .center)
                     .clipped()
                 divider { listWidth = min(340, max(110, $0)) } current: { listWidth }
                 ScrollView {
@@ -352,7 +352,6 @@ struct RoomLoudness: View {
                     Text(r.lufs.map { String(format: "%.1f", $0) } ?? "–").font(.system(size: 11, weight: .semibold).monospacedDigit()).fixedSize()
                 }
             }
-            Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .help("Integrated loudness of what you are hearing, in LUFS, and its true peak. Momentary and short-term readings are in the master effects' loudness meter.")

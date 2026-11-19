@@ -22,8 +22,10 @@ final class VoiceAgent {
     @ObservationIgnored private let wire = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true)!
     @ObservationIgnored private let play = AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 1)!
     @ObservationIgnored private var pending = 0     // spoken chunks still to play
+    @ObservationIgnored private var quietUntil = Date.distantPast
+    @ObservationIgnored private var audioRunning = false
     /// Bump when the prompt or tools change, so the agent on the account is brought up to date.
-    private static let version = 2
+    private static let version = 3
 
     var isOn: Bool { state != .off }
 
@@ -63,7 +65,7 @@ final class VoiceAgent {
         }
         return """
         You are the voice helper inside mitroley, a Mac app for fitting sound effects, ambience, music and voice to a video. \
-        The person is at the app right now, talking to you. Keep answers short and spoken-style: one or two sentences, no lists, no markdown.
+        mitroley was made by Ayan Mitra. The person is at the app right now, talking to you. Keep answers short and spoken-style: one or two sentences, no lists, no markdown.
 
         LANGUAGE. Answer in the language the person is speaking. If they change language, change with them at once, mid-conversation, \
         and use the language detection tool so your voice follows. Hindi mixed with English (Hinglish) is common: match it.
@@ -162,6 +164,7 @@ final class VoiceAgent {
             socket = task
             task.resume()
             sendJSON(["type": "conversation_initiation_client_data"])
+            guard socket === task, state == .connecting else { return }
             try startAudio()
             state = .listening
             receive(task)
@@ -173,9 +176,13 @@ final class VoiceAgent {
     func stop() {
         socket?.cancel(with: .normalClosure, reason: nil)
         socket = nil
-        engine.inputNode.removeTap(onBus: 0)
-        speaker.stop()
-        engine.stop()
+        // Only if the microphone was actually started: asking a half-started engine for its input can wait forever.
+        if audioRunning {
+            engine.inputNode.removeTap(onBus: 0)
+            speaker.stop()
+            engine.stop()
+        }
+        audioRunning = false
         // A fresh engine for next time, so echo cancelling is negotiated from a clean start.
         engine = AVAudioEngine()
         speaker = AVAudioPlayerNode()
@@ -188,19 +195,14 @@ final class VoiceAgent {
         problem = message
     }
 
+    /// Plain microphone, no system echo canceller: that canceller is what failed to start on this Mac (error -10875),
+    /// sometimes after hanging for seconds. Echo is avoided a simpler way instead: the microphone is not sent while
+    /// the helper is speaking, so it never hears itself. The cost is that you cannot talk over it mid-sentence.
     private func startAudio() throws {
-        // First with the Mac's echo canceller, so the helper does not hear its own voice from the speakers. Some audio
-        // set-ups refuse it; then carry on without, where headphones avoid the echo.
-        do { try startAudio(echoCancelling: true) } catch {
-            // Start again from nothing: an engine that failed with echo cancelling on does not always recover.
-            engine.stop()
+        do { try startAudio(echoCancelling: false) } catch {
             engine = AVAudioEngine()
             speaker = AVAudioPlayerNode()
-            do { try startAudio(echoCancelling: false) } catch {
-                engine = AVAudioEngine()
-                speaker = AVAudioPlayerNode()
-                throw ServiceError(message: "The microphone could not be started (\(error.localizedDescription)). Check that a microphone is chosen in System Settings › Sound › Input, and that no other app is holding it.")
-            }
+            throw ServiceError(message: "The microphone could not be started (\(error.localizedDescription)). Check that a microphone is chosen in System Settings › Sound › Input, and that no other app is holding it.")
         }
     }
 
@@ -231,11 +233,15 @@ final class VoiceAgent {
             }
             guard error == nil, out.frameLength > 0, let samples = out.int16ChannelData else { return }
             let chunk = Data(bytes: samples[0], count: Int(out.frameLength) * 2).base64EncodedString()
-            Task { @MainActor in self?.sendJSON(["user_audio_chunk": chunk]) }
+            Task { @MainActor in
+                guard let self, self.state != .speaking, Date() > self.quietUntil else { return }
+                self.sendJSON(["user_audio_chunk": chunk])
+            }
         }
         engine.prepare()
         try engine.start()
         speaker.play()
+        audioRunning = true
     }
 
     private func sendJSON(_ object: [String: Any]) {
@@ -299,7 +305,11 @@ final class VoiceAgent {
             Task { @MainActor in
                 guard let self else { return }
                 self.pending = max(0, self.pending - 1)
-                if self.pending == 0, self.state == .speaking { self.state = .listening }
+                if self.pending == 0, self.state == .speaking {
+                    // A short pause before listening again, for the room's own echo to die away.
+                    self.quietUntil = Date().addingTimeInterval(0.35)
+                    self.state = .listening
+                }
             }
         }
     }
