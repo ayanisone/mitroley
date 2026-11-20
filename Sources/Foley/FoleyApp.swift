@@ -108,6 +108,9 @@ struct FoleyApp: App {
                 Button("Redo") { store.redo() }.keyboardShortcut("z", modifiers: [.command, .shift]).disabled(!store.canRedo)
             }
             CommandGroup(replacing: .help) {
+                Button(store.voiceAgent.isOn ? "Stop Voice Helper" : "Talk to Voice Helper") { store.voiceAgent.toggle(store) }
+                    .keyboardShortcut("j")
+                Divider()
                 Button("Send a Suggestion…") { Panels.suggest() }
                 Button("mitroley on GitHub") { NSWorkspace.shared.open(URL(string: "https://github.com/ayanisone/mitroley")!) }
             }

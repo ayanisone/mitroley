@@ -290,7 +290,7 @@ struct SettingsSheet: View {
             }
             TextField("How it should behave (optional). For example: call me Ayan, be brief, joke a little.", text: $helperStyle, axis: .vertical)
                 .textFieldStyle(.roundedBorder).lineLimit(1...3)
-            Text("Changes apply the next time you start the helper. It follows English, Hindi and Bengali by itself. Talk over it, or click its bar, to stop it mid-sentence; on loud speakers speak up or use headphones. The helper lives on your ElevenLabs account as the agent \"mitroley helper\".")
+            Text("Start or stop it with ⌘J, or from the Help menu. Changes apply the next time you start it. It follows English, Hindi and Bengali by itself. Talk over it, or click its bar, to stop it mid-sentence; on loud speakers speak up or use headphones. The helper lives on your ElevenLabs account as the agent \"mitroley helper\".")
                 .font(.system(size: 11.5)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
 
             SectionTitle("Mixing")

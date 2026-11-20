@@ -51,7 +51,6 @@ struct MainView: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 RoomButton()
-                VoiceAgentButton()
                 Button { store.showClaude.toggle() } label: {
                     Label("Claude", systemImage: "sparkle")
                 }
