@@ -212,12 +212,20 @@ struct Slide: View {
     var log = false
     var tint: Color = Theme.accent
     var reset: Double?
+    /// What the value reads as. When set, it is shown above the knob while it is being dragged.
+    var label: ((Double) -> String)?
     let begin: () -> Void
     let change: (Double) -> Void
 
     @State private var dragging = false
     @State private var grab: CGFloat = 0
     private let knob: CGFloat = 12
+
+    static func decibels(_ v: Double) -> String { v <= -47.95 ? "Off" : String(format: "%+.1f dB", v) }
+    static func side(_ v: Double) -> String {
+        let n = Int((abs(v) * 100).rounded())
+        return n == 0 ? "Centre" : (v < 0 ? "L \(n)" : "R \(n)")
+    }
 
     private func unit(_ v: Double) -> Double {
         let c = min(range.upperBound, max(range.lowerBound, v))
@@ -242,6 +250,22 @@ struct Slide: View {
                     .frame(width: knob, height: knob)
                     .scaleEffect(dragging ? 1.2 : 1)
                     .shadow(color: .black.opacity(0.4), radius: 2, y: 1)
+                    // The value, riding just above the knob while it is held.
+                    .overlay(alignment: .top) {
+                        if dragging, let label {
+                            Text(label(value))
+                                .font(.system(size: 10.5, weight: .semibold)).monospacedDigit()
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 6).padding(.vertical, 2.5)
+                                .background(Color(white: 0.16), in: Capsule())
+                                .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 0.5))
+                                .shadow(color: .black.opacity(0.45), radius: 4, y: 2)
+                                .fixedSize()
+                                .offset(y: -22)
+                                .allowsHitTesting(false)
+                                .transition(.opacity)
+                        }
+                    }
                     .offset(x: x)
                     .animation(.spring(response: 0.2, dampingFraction: 1), value: dragging)
             }

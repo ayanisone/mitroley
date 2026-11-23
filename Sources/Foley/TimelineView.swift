@@ -315,11 +315,11 @@ struct TrackHeader: View {
                     ChipToggle(label: "S", on: track.solo) { edit { $0.solo.toggle() } }
                 }
                 HStack(spacing: 8) {
-                    Slide(value: track.volume, range: -48...12, tint: track.kind.color, reset: 0, begin: { store.beginGesture() }) { v in
+                    Slide(value: track.volume, range: -48...12, tint: track.kind.color, reset: 0, label: Slide.decibels, begin: { store.beginGesture() }) { v in
                         store.live { p in if let i = p.trackIndex(track.id) { p.tracks[i].volume = v } }
                     }
                     // Pan: left and right. On a spatial track it moves the sound's left–right position.
-                    Slide(value: track.spatial ? track.position.x : track.pan, range: -1...1, tint: Theme.secondary, reset: 0, begin: { store.beginGesture() }) { v in
+                    Slide(value: track.spatial ? track.position.x : track.pan, range: -1...1, tint: Theme.secondary, reset: 0, label: Slide.side, begin: { store.beginGesture() }) { v in
                         let x = abs(v) < 0.04 ? 0 : v
                         store.live { p in
                             guard let i = p.trackIndex(track.id) else { return }
