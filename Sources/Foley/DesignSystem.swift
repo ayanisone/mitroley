@@ -250,8 +250,8 @@ struct Slide: View {
                     .frame(width: knob, height: knob)
                     .scaleEffect(dragging ? 1.2 : 1)
                     .shadow(color: .black.opacity(0.4), radius: 2, y: 1)
-                    // The value, riding just above the knob while it is held.
-                    .overlay(alignment: .top) {
+                    // The value, riding just under the knob while it is held, clear of the track's name.
+                    .overlay(alignment: .bottom) {
                         if dragging, let label {
                             Text(label(value))
                                 .font(.system(size: 10.5, weight: .semibold)).monospacedDigit()
@@ -261,7 +261,7 @@ struct Slide: View {
                                 .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 0.5))
                                 .shadow(color: .black.opacity(0.45), radius: 4, y: 2)
                                 .fixedSize()
-                                .offset(y: -22)
+                                .offset(y: 22)
                                 .allowsHitTesting(false)
                                 .transition(.opacity)
                         }
