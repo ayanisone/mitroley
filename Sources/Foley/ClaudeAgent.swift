@@ -111,13 +111,61 @@ final class AgentState {
         }
         entries.append(AgentEntry(kind: .user, text: text))
         running = true
+        turn += 1
+        let mine = turn
         task = Task { [weak self] in
             await self?.loop(text, key: key, store: store)
-            self?.running = false
+            // A stopped turn can finish after the next one has started: only the newest may say the work is over.
+            if self?.turn == mine { self?.running = false }
         }
     }
 
     @ObservationIgnored private var messages: [[String: Any]] = []
+    @ObservationIgnored private var turn = 0
+
+    /// Makes the conversation valid again after a stop or a failure. Claude's API refuses a conversation in which
+    /// a request to run a command is not answered straight away, and a turn stopped half way leaves exactly that.
+    /// Every unanswered request gets an answer saying it was stopped; answers with no request are dropped.
+    private func mend() {
+        var out: [[String: Any]] = []
+        var i = 0
+        while i < messages.count {
+            let m = messages[i]
+            let blocks = m["content"] as? [[String: Any]]
+            if m["role"] as? String == "assistant" {
+                out.append(m)
+                let ids = (blocks ?? []).filter { $0["type"] as? String == "tool_use" }.compactMap { $0["id"] as? String }
+                i += 1
+                guard !ids.isEmpty else { continue }
+                var given: [String: [String: Any]] = [:], rest: [[String: Any]] = []
+                var plain: String?
+                if i < messages.count, messages[i]["role"] as? String == "user" {
+                    if let next = messages[i]["content"] as? [[String: Any]] {
+                        for b in next {
+                            if b["type"] as? String == "tool_result", let id = b["tool_use_id"] as? String { given[id] = b } else { rest.append(b) }
+                        }
+                    } else {
+                        plain = messages[i]["content"] as? String
+                    }
+                    i += 1
+                }
+                var answers: [[String: Any]] = ids.map { given[$0] ?? ["type": "tool_result", "tool_use_id": $0, "content": "Stopped before this finished. It may or may not have taken effect: check with get_project before relying on it.", "is_error": true] }
+                answers += rest
+                if let plain { answers.append(["type": "text", "text": plain]) }
+                out.append(["role": "user", "content": answers])
+            } else {
+                // A user message: answers that belong to no request cannot stay.
+                if let blocks {
+                    let kept = blocks.filter { $0["type"] as? String != "tool_result" }
+                    if !kept.isEmpty { out.append(["role": "user", "content": kept]) }
+                } else {
+                    out.append(m)
+                }
+                i += 1
+            }
+        }
+        messages = out
+    }
 
     func reset() {
         stop()
@@ -126,20 +174,25 @@ final class AgentState {
     }
 
     private func loop(_ text: String, key: String, store: Store) async {
+        mend()
         messages.append(["role": "user", "content": text])
-        for _ in 0..<90 {
+        for step in 0..<90 {
             if Task.isCancelled { return }
             let response: [String: Any]
             do { response = try await request(key: key) } catch {
+                if Task.isCancelled { return }
                 entries.append(AgentEntry(kind: .error, text: error.localizedDescription))
-                messages.removeLast()
+                // Only the question itself is taken back. Results of commands that already ran stay, or the
+                // conversation would be left with requests that were never answered.
+                if step == 0 { messages.removeLast() }
                 return
             }
+            if Task.isCancelled { return }
             let content = (response["content"] as? [[String: Any]]) ?? []
             let stop = response["stop_reason"] as? String ?? ""
             if stop == "refusal" {
                 entries.append(AgentEntry(kind: .error, text: "Claude declined this request."))
-                messages.removeLast()
+                if step == 0 { messages.removeLast() }
                 return
             }
             // Keep the full content (including thinking blocks) so the next turn stays valid.
