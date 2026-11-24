@@ -306,8 +306,13 @@ struct TransportBar: View {
                 }
                 .frame(width: 64)
             }
-            .disabled(store.project.video == nil)
-            .opacity(store.project.video == nil ? 0.35 : 1)
+            .disabled(store.project.video == nil || store.player.filmOnly)
+            .opacity(store.project.video == nil ? 0.35 : store.player.filmOnly ? 0.5 : 1)
+            // Flip between what the film came with and what was made here, to compare them.
+            SegmentedPill(options: [(false, "Mine"), (true, "Film")], selection: store.player.filmOnly, segmentWidth: 44, height: 26, size: 11.5) { store.player.filmOnly = $0 }
+                .disabled(store.project.video == nil)
+                .opacity(store.project.video == nil ? 0.35 : 1)
+                .help("Compare: Mine plays the sound made here. Film plays only the video's own sound. Press \\ to flip.")
             .help("The video's own sound. Click the icon to mute or restore it.")
             if store.versionList.count > 1 {
                 Rectangle().fill(Theme.line).frame(width: 1, height: 20)

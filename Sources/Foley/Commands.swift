@@ -231,6 +231,8 @@ final class Commands {
         tool("set_monitor", "Switches live monitoring between plain stereo and the spatial (binaural / Atmos-style) render, and/or sets what the session is mixed for. The format decides which speakers the Room window shows and which export is offered first; every format can still be exported.",
              ["mode": p("string", "stereo or spatial.", extra: ["enum": ["stereo", "spatial"]]),
               "format": p("string", "Session mix format.", extra: ["enum": MixFormat.allCases.map(\.rawValue)])]),
+        tool("set_preset", "Gives a track a ready-made sound: a short chain of built-in effects, already set, that runs live and in every export. Use it when the picture says the sound comes through something or from somewhere: a voice on a phone, a radio in the room, music from next door, a scene underwater. Replaces any preset already on the track. Presets: " + SoundPreset.all.map { "\($0.name) (\($0.about))" }.joined(separator: " ") + " Pass \"none\" to remove it.",
+             ["track": p("string", "Track name or id."), "preset": p("string", "The preset's name, or none.")], required: ["track", "preset"]),
         tool("set_master", "Edits the master effects rack. Nothing is applied to the mix unless an effect is in the rack and on; a new session has an empty rack. Passing any setting of an effect adds that effect. compressor and limiter are linked across every channel (one gain from the loudest channel, applied to all, so the image never shifts and no channel clips) and run live and in every export except stems. surround_reverb gives side, rear and height speakers their own decorrelated copy of each space's reverb in surround exports. trims set surround and height levels in fold-downs. loudness is a meter only. Only the fields you pass change.",
              ["compressor": p("boolean", "Add and switch on, or switch off."),
               "threshold_db": p("number", "-48…0."), "ratio": p("number", "1…12."),
@@ -664,6 +666,15 @@ final class Commands {
                 store.player.monitor = m
             }
             return CommandResult(json: ["ok": true, "format": store.project.format.rawValue, "monitor": store.player.monitor.rawValue])
+        case "set_preset":
+            let ti = try trackIndex(a)
+            let want = (a.str("preset") ?? "").lowercased()
+            if want == "none" || want.isEmpty { store.applyPreset(nil, to: store.project.tracks[ti].id); return CommandResult(json: ["ok": true, "preset": "none"]) }
+            guard let preset = SoundPreset.all.first(where: { $0.name.lowercased() == want }) ?? SoundPreset.all.first(where: { $0.name.lowercased().contains(want) }) else {
+                throw CommandError("No preset called \(want). Presets: " + SoundPreset.all.map(\.name).joined(separator: ", "))
+            }
+            store.applyPreset(preset, to: store.project.tracks[ti].id)
+            return CommandResult(json: ["ok": true, "preset": preset.name, "effects": preset.chain.map(\.name)])
         case "set_master":
             store.mutate { p in
                 func set(_ kind: EffectKind, _ key: String, _ arg: String) {

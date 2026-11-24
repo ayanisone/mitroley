@@ -195,10 +195,48 @@ extension Store {
 }
 
 extension Store {
+    /// File › Share Session: one .zip with everything the session needs, to send to someone else with mitroley.
+    /// Exports and the stills made for Claude are left out; they are remade on the other side.
+    func shareSessionAsking() {
+        saveNow()
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = Places.tidy(project.name) + ".mitroley.zip"
+        panel.directoryURL = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first
+        panel.message = "The other person unzips it and double-clicks the session."
+        guard panel.runModal() == .OK, let dest = panel.url else { return }
+        let source = folder, name = Places.tidy(project.name) + "." + AppPaths.sessionExtension
+        busy = "Packing the session"
+        Task {
+            defer { busy = nil }
+            do {
+                let size = try await Task.detached(priority: .userInitiated) { () -> Int in
+                    let fm = FileManager.default
+                    let temp = fm.temporaryDirectory.appendingPathComponent("share-" + UUID().uuidString, isDirectory: true)
+                    let copy = temp.appendingPathComponent(name, isDirectory: true)
+                    try fm.createDirectory(at: copy, withIntermediateDirectories: true)
+                    defer { try? fm.removeItem(at: temp) }
+                    for item in try fm.contentsOfDirectory(at: source, includingPropertiesForKeys: nil) where !["Exports", "Frames"].contains(item.lastPathComponent) {
+                        try fm.copyItem(at: item, to: copy.appendingPathComponent(item.lastPathComponent))
+                    }
+                    try? fm.removeItem(at: dest)
+                    let zip = Process()
+                    zip.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+                    zip.arguments = ["-c", "-k", "--keepParent", copy.path, dest.path]
+                    try zip.run()
+                    zip.waitUntilExit()
+                    guard zip.terminationStatus == 0 else { throw ExportError(message: "The session could not be zipped.") }
+                    return ((try? fm.attributesOfItem(atPath: dest.path))?[.size] as? Int) ?? 0
+                }.value
+                say("Packed \(dest.lastPathComponent), \(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))")
+                NSWorkspace.shared.activateFileViewerSelecting([dest])
+            } catch { say("Could not pack the session: \(error.localizedDescription)", error: true) }
+        }
+    }
+
     /// Shows the session's own settings in the side panel.
     func showSession() {
         selection = .none
-        if showClaude, !agent.running { showClaude = false }
+        if showClaude, !anyAgentRunning { showClaude = false }
     }
 
     /// Asks ElevenLabs which speech models this account can use, so new ones appear without an app update.

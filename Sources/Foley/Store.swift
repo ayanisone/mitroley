@@ -42,7 +42,7 @@ final class Store {
             stopAudition()
             // Clicking a clip, track, scene or space shows its settings, even while the assistant is open
             // (but not while Claude is working and selecting things itself).
-            if selection != .none, showClaude, !agent.running { showClaude = false }
+            if selection != .none, showClaude, !anyAgentRunning { showClaude = false }
         }
     }
     var zoom = 1.0
@@ -92,7 +92,23 @@ final class Store {
     var canUndo = false
     var canRedo = false
     let player = Player()
-    let agent = AgentState()
+    /// Claude, up to four at once: each has its own conversation and sees a note of what the others are doing.
+    var agents: [AgentState] = [AgentState(name: "Agent 1")]
+    var agentIndex = 0
+    var agent: AgentState { agents[min(max(0, agentIndex), agents.count - 1)] }
+    var anyAgentRunning: Bool { agents.contains { $0.running } }
+    func addAgent() {
+        guard agents.count < 4 else { return }
+        let n = (1...4).first { i in !agents.contains { $0.name == "Agent \(i)" } } ?? agents.count + 1
+        agents.append(AgentState(name: "Agent \(n)"))
+        agentIndex = agents.count - 1
+    }
+    func closeAgent(_ a: AgentState) {
+        guard agents.count > 1, let i = agents.firstIndex(where: { $0 === a }) else { return }
+        a.stop()
+        agents.remove(at: i)
+        agentIndex = min(agentIndex, agents.count - 1)
+    }
     /// The take playing on its own in the inspector, if any.
     var auditioning: UUID?
     /// A loop start marked with ⌘-click on the ruler, waiting for the second ⌘-click. Not saved.
@@ -258,9 +274,19 @@ final class Store {
 
     @discardableResult
     func open(_ url: URL) -> Bool {
-        guard let data = try? Data(contentsOf: url.appendingPathComponent("project.json")),
-              var p = try? JSONDecoder().decode(Project.self, from: data) else {
-            say("That project could not be opened.", error: true)
+        guard let data = try? Data(contentsOf: url.appendingPathComponent("project.json")) else {
+            say(url.pathExtension == "zip" ? "Unzip the session first: double-click the .zip in Finder, then open the .mitroley it makes."
+                : "\(url.lastPathComponent) is not a mitroley session, or it arrived incomplete. Ask for it again as a .zip made with File › Share Session.", error: true)
+            return false
+        }
+        var p: Project
+        do { p = try JSONDecoder().decode(Project.self, from: data) } catch {
+            // Say what was wrong, so a session from a newer version is not mistaken for a broken one.
+            var why = "\(error.localizedDescription)"
+            if case DecodingError.dataCorrupted(let c) = error { why = c.debugDescription + " (" + c.codingPath.map(\.stringValue).joined(separator: " › ") + ")" }
+            if case DecodingError.keyNotFound(let k, _) = error { why = "it has no \"\(k.stringValue)\"" }
+            if case DecodingError.typeMismatch(_, let c) = error { why = c.debugDescription + " (" + c.codingPath.map(\.stringValue).joined(separator: " › ") + ")" }
+            say("That session could not be opened: \(why). It was probably saved by a newer mitroley than this one: update this copy and try again.", error: true)
             return false
         }
         save()

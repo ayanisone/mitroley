@@ -76,6 +76,12 @@ struct FoleyApp: App {
                 .preferredColorScheme(.dark)
                 .tint(Theme.accent)
                 .frame(minWidth: 1080, minHeight: 680)
+                // In the window that is already open, not a second one.
+                .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
+                // Double-clicking a session in Finder, or dropping one on the Dock icon, opens it.
+                .onOpenURL { url in
+                    if url.pathExtension == AppPaths.sessionExtension || FileManager.default.fileExists(atPath: url.appendingPathComponent("project.json").path) { store.open(url) }
+                }
                 .onAppear {
                     Keys.install(store)
                     if UserDefaults.standard.bool(forKey: "showClaude") { store.showClaude = true }
@@ -91,6 +97,7 @@ struct FoleyApp: App {
                 Button("Save") { store.saveNow() }.keyboardShortcut("s")
                 Button("Save As…") { store.saveAs() }.keyboardShortcut("s", modifiers: [.command, .shift])
                 Button("Rename Session…") { store.renameSessionAsking() }
+                Button("Share Session…") { store.shareSessionAsking() }
                 Divider()
                 Button("Import Video…") { Panels.importVideo(store) }.keyboardShortcut("i")
                 Button("Import Revised Cut…") { Panels.importRevision(store) }.keyboardShortcut("i", modifiers: [.command, .shift])
@@ -136,6 +143,7 @@ struct FoleyApp: App {
                 Button("Loop Selection") { store.loopSelection() }.keyboardShortcut("l")
                 Button("Clear Loop Region") { store.clearLoop() }.keyboardShortcut("l", modifiers: [.command, .shift])
                 Divider()
+                Button("New Extras Track (Muted)") { store.selection = .track(store.addExtrasTrack()) }
                 Button("Group Tracks by Kind") { store.groupByKind() }.keyboardShortcut("g")
                 Button("Move Track Up") { if let id = store.selectedTrack { store.moveTrack(id, -1) } }
                     .keyboardShortcut(.upArrow, modifiers: [.command, .option])
@@ -182,6 +190,10 @@ enum Keys {
             if !event.modifierFlags.contains(.shift), let ch = event.charactersIgnoringModifiers?.lowercased().first,
                let t = Tool.allCases.first(where: { $0.key == ch }), !(ch == "t") {
                 store.tool = t
+                return nil
+            }
+            if event.charactersIgnoringModifiers == "\\", store.project.video != nil { // compare with the film's own sound
+                store.player.filmOnly.toggle()
                 return nil
             }
             switch event.keyCode {

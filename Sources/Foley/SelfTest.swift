@@ -23,6 +23,10 @@ enum SelfTest {
         let clickDur = AudioCache.shared.duration(click), noiseDur = AudioCache.shared.duration(noise)
         check("decode", clickDur > 0 && noiseDur > 0, String(format: "click %.2fs noise %.2fs", clickDur, noiseDur))
 
+        // Every sound preset builds: each link is an effect this Mac has, and it took its settings.
+        let broken = SoundPreset.all.filter { p in let s = p.slots(); return s.count != p.chain.count || s.contains { $0.state == nil } }
+        check("sound presets build", broken.isEmpty, broken.isEmpty ? "\(SoundPreset.all.count) presets" : "broken: " + broken.map(\.name).joined(separator: ", "))
+
         var p = Project()
         p.duration = 8
         let room = SpaceTemplate.named("Living Room")!.space

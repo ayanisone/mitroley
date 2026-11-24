@@ -5,6 +5,31 @@ extension Store {
     // MARK: Clips
 
     /// Copies the selected clip and places the copy right after it.
+    /// A copy of a track right under it: same clips, settings, automation and plug-ins.
+    func duplicateTrack(_ id: UUID) {
+        guard let i = project.trackIndex(id) else { return }
+        var copy = project.tracks[i]
+        copy.id = UUID()
+        copy.name = project.tracks[i].name + " copy"
+        copy.solo = false
+        for k in copy.clips.indices { copy.clips[k].id = UUID(); copy.clips[k].pending = 0 }
+        if let plugs = copy.plugins { copy.plugins = plugs.map { var q = $0; q.id = UUID(); return q } }
+        capturePluginStates()
+        mutate { $0.tracks.insert(copy, at: i + 1) }
+        selection = .track(copy.id)
+    }
+
+    /// A muted track for sounds that are implied but not needed: there to pull from when the mix wants more.
+    @discardableResult
+    func addExtrasTrack() -> UUID {
+        if let t = project.tracks.first(where: { $0.name.caseInsensitiveCompare("Extras") == .orderedSame }) { return t.id }
+        var t = Track(name: "Extras", kind: .fx)
+        t.spatial = true
+        t.mute = true
+        mutate { $0.tracks.append(t) }
+        return t.id
+    }
+
     func duplicateClip() {
         guard case .clip(let id) = selection, let l = project.locate(clip: id) else { return }
         var copy = project.tracks[l.track].clips[l.clip]

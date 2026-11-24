@@ -6,14 +6,23 @@ struct AgentEntry: Identifiable, Equatable {
     var id = UUID()
     var kind: Kind
     var text: String
+    /// For a message of yours: where the conversation stood before it, so it can be changed and asked again.
+    var mark: Int?
+    /// Files that went with it.
+    var files: [URL] = []
 }
 
 /// Claude working inside the session. It looks at frames of the video, reads the storyboard,
 /// and edits the session through the same commands the MCP bridge exposes.
 @MainActor @Observable
-final class AgentState {
+final class AgentState: Identifiable {
+    let id = UUID()
+    var name: String
+    /// The model this agent uses. nil = the one chosen in Settings.
+    var model: String?
     var entries: [AgentEntry] = []
     var running = false
+    init(name: String = "Agent 1") { self.name = name }
     @ObservationIgnored private var task: Task<Void, Never>?
 
     /// How hard Claude thinks before it acts: low, medium or high. High unless changed in the Claude panel.
@@ -80,6 +89,13 @@ final class AgentState {
     sections, one per scene or run of shots, each with styles that say how the music should feel there, so the \
     score turns where the picture turns. Instrumental unless the user asks for vocals. Put it on a dry music \
     track and set its level under the effects.
+    Scene boundaries are not walls. Sound designers let a tail ring past the cut: an ambience may run on half a \
+    second or more into the next scene under a fade, and the decay of a hit, a pass-by or a door may finish after \
+    the picture has moved on. Do not trim every clip to its shot; a little overlap is what makes it feel made by a \
+    person. Only cut hard on the frame when the cut itself is the point.
+    Extras: sounds the picture only implies (distant traffic behind a close-up, a crowd out of frame, birds the \
+    light suggests) go on a track named "Extras", made with add_track and muted with update_track. They are there \
+    for the person to pull from; do not leave the film without them, and do not put them in the mix unmuted.
     Footsteps: never lay one long footsteps clip under a walk; it will not match the feet. Step through the \
     walking shot with analyze_video (start, end, interval 0.1 or less), note the time each foot lands, then call \
     place_steps with those times and the shoe and surface. Do the same for any repeated contact (hoofs, claps, \
@@ -109,18 +125,86 @@ final class AgentState {
         running = false
     }
 
-    func send(_ text: String, store: Store) {
+    /// Changes an earlier message of yours and asks again from there. What Claude said and did after it is dropped
+    /// from the conversation; edits it already made to the session stay (Command-Z undoes them).
+    func edit(_ entry: AgentEntry, to text: String, store: Store) {
+        guard !running, let i = entries.firstIndex(where: { $0.id == entry.id }), let mark = entry.mark else { return }
+        entries = Array(entries.prefix(i))
+        messages = Array(messages.prefix(min(mark, messages.count)))
+        send(text, files: entry.files, store: store)
+    }
+
+    /// Up to this many characters of a text file are sent.
+    private static let textLimit = 150_000
+
+    /// What goes to Claude for one message of yours: the words, any files, and a note on what the other agents are doing.
+    private func content(_ text: String, files: [URL], store: Store) -> Any {
+        var blocks: [[String: Any]] = []
+        var urls = files
+        // A Markdown file's own pictures come along with it.
+        for f in files where ["md", "markdown"].contains(f.pathExtension.lowercased()) {
+            guard let body = try? String(contentsOf: f, encoding: .utf8) else { continue }
+            let pattern = try? NSRegularExpression(pattern: #"!\[[^\]]*\]\(([^)\s]+)"#)
+            for m in pattern?.matches(in: body, range: NSRange(body.startIndex..., in: body)) ?? [] {
+                guard let r = Range(m.range(at: 1), in: body) else { continue }
+                let link = String(body[r]).removingPercentEncoding ?? String(body[r])
+                guard !link.contains("://") else { continue }
+                let u = link.hasPrefix("/") ? URL(fileURLWithPath: link) : f.deletingLastPathComponent().appendingPathComponent(link)
+                if FileManager.default.fileExists(atPath: u.path), !urls.contains(u), urls.count < 20 { urls.append(u) }
+            }
+        }
+        for u in urls {
+            let ext = u.pathExtension.lowercased()
+            let images = ["png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"]
+            if let type = images[ext] {
+                guard let data = try? Data(contentsOf: u), data.count < 4_500_000 else {
+                    blocks.append(["type": "text", "text": "[\(u.lastPathComponent) was too large to attach.]"]); continue
+                }
+                blocks.append(["type": "text", "text": "Attached picture: \(u.lastPathComponent)"])
+                blocks.append(["type": "image", "source": ["type": "base64", "media_type": type, "data": data.base64EncodedString()]])
+            } else if ext == "pdf" {
+                guard let data = try? Data(contentsOf: u), data.count < 20_000_000 else {
+                    blocks.append(["type": "text", "text": "[\(u.lastPathComponent) was too large to attach.]"]); continue
+                }
+                blocks.append(["type": "document", "title": u.lastPathComponent, "source": ["type": "base64", "media_type": "application/pdf", "data": data.base64EncodedString()]])
+            } else if let body = try? String(contentsOf: u, encoding: .utf8) {
+                let cut = body.count > Self.textLimit
+                blocks.append(["type": "text", "text": "Attached file \(u.lastPathComponent)\(cut ? " (the first part)" : ""):\n\n" + String(body.prefix(Self.textLimit))])
+            } else {
+                blocks.append(["type": "text", "text": "[\(u.lastPathComponent) is not a kind of file that can be read here. To use a sound or a video, import it into the session.]"])
+            }
+        }
+        let others = store.agents.filter { $0 !== self && !$0.entries.isEmpty }
+        if !others.isEmpty {
+            var note = "Other agents are working on this same session alongside you. Stay out of what they are doing unless asked, and check get_project before changing anything they may have touched.\n"
+            for o in others {
+                let asked = o.entries.last { $0.kind == .user }?.text ?? ""
+                let did = o.entries.filter { $0.kind == .action }.suffix(12).map(\.text)
+                let said = o.entries.last { $0.kind == .claude }?.text ?? ""
+                note += "\n\(o.name) (\(o.running ? "working now" : "idle")). Asked: \(asked.prefix(400))"
+                if !did.isEmpty { note += "\nIts latest steps: " + did.joined(separator: "; ") }
+                if !said.isEmpty { note += "\nIt last said: \(said.prefix(500))" }
+            }
+            blocks.append(["type": "text", "text": note])
+        }
+        if blocks.isEmpty { return text }
+        return blocks + [["type": "text", "text": text]]
+    }
+
+    func send(_ text: String, files: [URL] = [], store: Store) {
         guard !running else { return }
         guard let key = Secrets.get(.anthropic) else {
             entries.append(AgentEntry(kind: .error, text: "Add your Anthropic API key in Settings to let Claude work on the session."))
             return
         }
-        entries.append(AgentEntry(kind: .user, text: text))
+        mend()
+        entries.append(AgentEntry(kind: .user, text: text, mark: messages.count, files: files))
+        let content = content(text, files: files, store: store)
         running = true
         turn += 1
         let mine = turn
         task = Task { [weak self] in
-            await self?.loop(text, key: key, store: store)
+            await self?.loop(content, key: key, store: store)
             // A stopped turn can finish after the next one has started: only the newest may say the work is over.
             if self?.turn == mine { self?.running = false }
         }
@@ -179,9 +263,9 @@ final class AgentState {
         messages = []
     }
 
-    private func loop(_ text: String, key: String, store: Store) async {
+    private func loop(_ content: Any, key: String, store: Store) async {
         mend()
-        messages.append(["role": "user", "content": text])
+        messages.append(["role": "user", "content": content])
         for step in 0..<90 {
             if Task.isCancelled { return }
             let response: [String: Any]
@@ -251,7 +335,7 @@ final class AgentState {
         req.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
         req.setValue("application/json", forHTTPHeaderField: "content-type")
         let body: [String: Any] = [
-            "model": Self.model,
+            "model": model ?? Self.model,
             "max_tokens": 16000,
             "system": Self.system,
             "tools": Commands.tools,

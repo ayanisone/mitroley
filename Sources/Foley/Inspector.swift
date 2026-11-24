@@ -384,6 +384,7 @@ struct TrackPanel: View {
         Field(title: "Muffle", value: AutoParam.highCut.format(track.highCut)) { slide(\.highCut, 200...20000, log: true, reset: 20000) }
         Field(title: "Low cut", value: track.lowCut <= 25 ? "Off" : String(format: "%.0f Hz", track.lowCut)) { slide(\.lowCut, 20...2000, log: true, reset: 20) }
 
+        PresetSection(track: track)
         PluginSection(track: track)
 
         SectionTitle("Position")

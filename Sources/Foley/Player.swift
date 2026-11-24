@@ -13,6 +13,13 @@ final class Player {
     var isPlaying = false
     var time = 0.0
     var monitor: MonitorMode = .stereo { didSet { applyNow() } }
+    /// Comparing: true = only the film's own sound is heard, at full level, and the mix made here is silent.
+    var filmOnly = false { didSet { applyFilm(); applyNow() } }
+    private func applyFilm() {
+        video.volume = filmOnly ? 1 : Float(project.videoVolume)
+        video.isMuted = filmOnly ? false : project.videoVolume <= 0.001
+        graph.engine.mainMixerNode.outputVolume = filmOnly ? 0 : 1
+    }
     var loop = false
     var masterL: Float = 0
     var masterR: Float = 0
@@ -87,8 +94,7 @@ final class Player {
         graph.loadClips(p, resolve: resolve)
         graph.bus?.set(p.bus)
         startEngine()
-        video.volume = Float(p.videoVolume)
-        video.isMuted = p.videoVolume <= 0.001
+        applyFilm()
         applyNow()
     }
 

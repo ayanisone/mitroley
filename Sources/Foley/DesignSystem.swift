@@ -288,8 +288,38 @@ struct Slide: View {
             .simultaneousGesture(TapGesture(count: 2).onEnded {
                 if let reset { begin(); change(reset) }
             })
+            .contextMenu {
+                Button("Type a Value…") { typeValue() }
+                if let reset { Button("Reset") { begin(); change(reset) } }
+            }
         }
         .frame(height: 18)
+    }
+
+    /// Right-click › Type a Value: a small box to enter the number, as in other audio apps. Sliders that run from
+    /// 0 to 1 or -1 to 1 are typed as percent, since that is how they read on screen.
+    private func typeValue() {
+        let percent = range.lowerBound >= -1 && range.upperBound <= 1
+        let k = percent ? 100.0 : 1.0
+        func tidy(_ v: Double) -> String { v == v.rounded() ? String(format: "%.0f", v) : String(format: "%.2f", v) }
+        let alert = NSAlert()
+        alert.messageText = "Type a value"
+        alert.informativeText = "Between \(tidy(range.lowerBound * k)) and \(tidy(range.upperBound * k))" + (percent ? " (percent)." : ".") + " A minus sign is fine."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        field.stringValue = tidy(value * k)
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Set")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        var text = field.stringValue.lowercased().replacingOccurrences(of: ",", with: ".").replacingOccurrences(of: "−", with: "-")
+        // "L 30" and "R 30" for a pan.
+        var sign = 1.0
+        if text.hasPrefix("l") { sign = -1; text.removeFirst() } else if text.hasPrefix("r") { text.removeFirst() }
+        let digits = text.filter { "0123456789.-+".contains($0) }
+        guard let typed = Double(digits) else { NSSound.beep(); return }
+        begin()
+        change(min(range.upperBound, max(range.lowerBound, sign * typed / k)))
     }
 }
 

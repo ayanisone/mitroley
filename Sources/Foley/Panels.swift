@@ -11,6 +11,11 @@ struct ClaudePanel: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var input = ""
     @State private var copied = false
+    /// Files waiting to go with the next message.
+    @State private var files: [URL] = []
+    /// The earlier message being changed, if any.
+    @State private var editing: AgentEntry?
+    @State private var dropping = false
 
     private let starters = [
         "Fit the sound to the picture",
@@ -45,6 +50,36 @@ struct ClaudePanel: View {
             .padding(.horizontal, 16)
             .frame(height: 48)
 
+            // One tab per agent. Each keeps its own conversation; they are told what the others are doing.
+            HStack(spacing: 6) {
+                ForEach(Array(store.agents.enumerated()), id: \.element.id) { i, a in
+                    let on = i == store.agentIndex
+                    HStack(spacing: 5) {
+                        if a.running { ProgressView().controlSize(.mini).scaleEffect(0.7).frame(width: 10, height: 10) }
+                        Text(a.name).font(.system(size: 11.5, weight: on ? .semibold : .medium)).lineLimit(1)
+                    }
+                    .foregroundStyle(on ? Color.white : Theme.secondary)
+                    .padding(.horizontal, 10).frame(height: 26)
+                    .background(on ? Color.white.opacity(0.14) : Color.white.opacity(0.05), in: Capsule())
+                    .contentShape(Capsule())
+                    .onTapGesture { store.agentIndex = i; editing = nil }
+                    .contextMenu {
+                        Button("Rename…") { rename(a) }
+                        Button("Close", role: .destructive) { store.closeAgent(a) }.disabled(store.agents.count < 2)
+                    }
+                }
+                if store.agents.count < 4 {
+                    Button { store.addAgent(); editing = nil } label: {
+                        Image(systemName: "plus").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.secondary)
+                            .frame(width: 26, height: 26).background(Color.white.opacity(0.05), in: Circle()).contentShape(Circle())
+                    }
+                    .buttonStyle(PressStyle(scale: 0.9))
+                    .help("Add another agent, to work on something else at the same time. Each can use a different model.")
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16).padding(.bottom, 8)
+
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
@@ -52,7 +87,12 @@ struct ClaudePanel: View {
                             intro
                         }
                         ForEach(agent.entries) { entry in
-                            EntryRow(entry: entry).id(entry.id)
+                            EntryRow(entry: entry, canEdit: !agent.running) {
+                                editing = entry
+                                input = entry.text
+                                files = entry.files
+                            }
+                            .id(entry.id)
                         }
                         if agent.running {
                             HStack(spacing: 8) {
@@ -61,17 +101,49 @@ struct ClaudePanel: View {
                             }
                             .id("working")
                         }
+                        Color.clear.frame(height: 1).id("end")
                     }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 12)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .onChange(of: agent.entries.count) {
-                    withAnimation(Motion.ui(reduceMotion)) { proxy.scrollTo(agent.entries.last?.id, anchor: .bottom) }
-                }
+                .defaultScrollAnchor(.bottom)
+                // Follows the work: every new step, the Working line appearing, and switching agents all go to the end.
+                .onChange(of: agent.entries.count) { toEnd(proxy) }
+                .onChange(of: agent.entries.last?.text) { toEnd(proxy) }
+                .onChange(of: agent.running) { toEnd(proxy) }
+                .onChange(of: store.agentIndex) { toEnd(proxy, animated: false) }
             }
 
             VStack(alignment: .leading, spacing: 8) {
+                if editing != nil {
+                    HStack(spacing: 6) {
+                        Image(systemName: "pencil").font(.system(size: 10, weight: .bold))
+                        Text("Changing an earlier message. Claude answers again from there.").font(.system(size: 11.5))
+                        Spacer(minLength: 4)
+                        Button("Cancel") { editing = nil; input = ""; files = [] }.buttonStyle(.plain).font(.system(size: 11.5, weight: .semibold))
+                    }
+                    .foregroundStyle(Theme.accent)
+                }
+                if !files.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(files, id: \.self) { f in
+                                HStack(spacing: 5) {
+                                    Image(systemName: "paperclip").font(.system(size: 9, weight: .bold))
+                                    Text(f.lastPathComponent).font(.system(size: 11.5)).lineLimit(1)
+                                    Button { files.removeAll { $0 == f } } label: {
+                                        Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                                .foregroundStyle(Theme.secondary)
+                                .padding(.horizontal, 9).frame(height: 24)
+                                .background(Color.white.opacity(0.08), in: Capsule())
+                            }
+                        }
+                    }
+                }
                 QuietEditor(placeholder: "Tell Claude what to do with the sound", text: $input, height: 62) {
                     if !agent.running, !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { send(input) }
                 }
@@ -95,7 +167,8 @@ struct ClaudePanel: View {
                             }
                             Section("Model") {
                                 ForEach([("claude-opus-5-5", "Claude Opus 5.5"), ("claude-fable-5-2", "Claude Fable 5.2"), ("claude-sonnet-5-5", "Claude Sonnet 5.5")], id: \.0) { m in
-                                    Toggle(m.1, isOn: Binding(get: { model == m.0 }, set: { if $0 { model = m.0 } }))
+                                    // Each agent keeps its own model; the choice is also the starting point for new ones.
+                                    Toggle(m.1, isOn: Binding(get: { (agent.model ?? model) == m.0 }, set: { if $0 { agent.model = m.0; model = m.0 } }))
                                 }
                             }
                         } label: {
@@ -112,6 +185,13 @@ struct ClaudePanel: View {
                         .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
                         .help("How hard Claude thinks before it acts, and which model it uses. Applies from the next message.")
                     }
+                    Button { attach() } label: {
+                        Image(systemName: "paperclip")
+                            .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.secondary)
+                            .frame(width: 30, height: 30).background(Color.white.opacity(0.07), in: Circle()).contentShape(Circle())
+                    }
+                    .buttonStyle(PressStyle(scale: 0.92))
+                    .help("Attach files for Claude to read: notes, a brief, a script, pictures, a PDF. You can also drop them on this panel.")
                     Button { dictation.toggle(typed: input) { input = $0 } } label: {
                         Image(systemName: dictation.listening ? "mic.fill" : "mic")
                             .font(.system(size: 13, weight: .semibold))
@@ -123,20 +203,85 @@ struct ClaudePanel: View {
                     .buttonStyle(PressStyle(scale: 0.92))
                     .help(dictation.listening ? "Stop listening" : "Speak instead of typing")
                     Spacer()
-                    Text(dictation.listening ? "Listening" : "Return to send · Shift-Return for a new line").font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+                    Text(dictation.listening ? "Listening" : "Return to send").font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+                        .help("Return sends. Shift-Return starts a new line.")
                 }
             }
             .padding(16)
             .background(Color.black.opacity(0.2))
         }
+        .overlay {
+            if dropping {
+                RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.accent, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
+                    .background(Theme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(Text("Drop to attach").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.accent))
+                    .padding(8).allowsHitTesting(false)
+            }
+        }
+        .onDrop(of: [.fileURL], isTargeted: $dropping) { providers in
+            for p in providers {
+                _ = p.loadObject(ofClass: URL.self) { url, _ in
+                    guard let url else { return }
+                    DispatchQueue.main.async { add(url) }
+                }
+            }
+            return true
+        }
+    }
+
+    private func toEnd(_ proxy: ScrollViewProxy, animated: Bool = true) {
+        // After the new row has been laid out, or the scroll lands one row short.
+        DispatchQueue.main.async {
+            if animated { withAnimation(Motion.ui(reduceMotion)) { proxy.scrollTo("end", anchor: .bottom) } }
+            else { proxy.scrollTo("end", anchor: .bottom) }
+        }
+    }
+
+    private func add(_ url: URL) {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), !isDir.boolValue, !files.contains(url), files.count < 12 else { return }
+        files.append(url)
+    }
+
+    private func attach() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.message = "Choose files for Claude to read"
+        guard panel.runModal() == .OK else { return }
+        panel.urls.forEach(add)
+    }
+
+    private func rename(_ a: AgentState) {
+        let alert = NSAlert()
+        alert.messageText = "Name this agent"
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        field.stringValue = a.name
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if alert.runModal() == .alertFirstButtonReturn {
+            let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty { a.name = String(name.prefix(18)) }
+        }
+        _ = name
     }
 
     private func send(_ text: String) {
         dictation.stop()
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return }
+        let with = files
         input = ""
-        store.agent.send(t, store: store)
+        files = []
+        if let e = editing {
+            editing = nil
+            store.agent.edit(e, to: t, store: store)
+        } else {
+            store.agent.send(t, files: with, store: store)
+        }
     }
 
     @ViewBuilder private var intro: some View {
@@ -182,15 +327,36 @@ struct ClaudePanel: View {
 
 private struct EntryRow: View {
     let entry: AgentEntry
+    var canEdit = false
+    var edit: () -> Void = {}
+    @State private var over = false
     var body: some View {
         switch entry.kind {
         case .user:
-            Text(entry.text)
-                .font(.system(size: 13))
+            HStack(alignment: .center, spacing: 6) {
+                Spacer(minLength: 0)
+                if over, canEdit, entry.mark != nil {
+                    Button(action: edit) {
+                        Image(systemName: "pencil").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.secondary)
+                            .frame(width: 22, height: 22).background(Color.white.opacity(0.08), in: Circle()).contentShape(Circle())
+                    }
+                    .buttonStyle(PressStyle(scale: 0.9))
+                    .help("Change this message and ask again from here")
+                }
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text(entry.text)
+                        .font(.system(size: 13))
+                        .textSelection(.enabled)
+                    if !entry.files.isEmpty {
+                        Label(entry.files.map(\.lastPathComponent).joined(separator: ", "), systemImage: "paperclip")
+                            .font(.system(size: 11)).foregroundStyle(Theme.secondary).lineLimit(2)
+                    }
+                }
                 .padding(.horizontal, 11).padding(.vertical, 8)
                 .background(Theme.accent.opacity(0.2), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .textSelection(.enabled)
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .onHover { over = $0 }
         case .claude:
             Text(entry.text).font(.system(size: 13)).lineSpacing(2.5).textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
@@ -378,6 +544,7 @@ struct ExportSheet: View {
     @State private var destination = 0
     /// The file name typed by hand, without its ending. Empty = the usual name for the chosen format.
     @State private var name = ""
+    @State private var lastUsual = ""
 
     private var usualName: String { format.isFolder ? "\(store.project.name) \(format.suffix)" : "\(store.project.name).\(format.suffix)" }
     private var ending: String { format.isFolder ? "folder" : "." + format.ext }
@@ -428,7 +595,7 @@ struct ExportSheet: View {
             }
             .frame(maxHeight: max(160, (NSApp.mainWindow?.frame.height ?? 800) - 390))
             HStack(spacing: 8) {
-                Image(systemName: "pencil").font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+                Text("Save as").font(.system(size: 11.5, weight: .medium)).foregroundStyle(Theme.secondary)
                 TextField(usualName, text: $name)
                     .textFieldStyle(.plain).font(.system(size: 12.5))
                     .padding(.horizontal, 9).frame(height: 28)
@@ -489,7 +656,12 @@ struct ExportSheet: View {
         }
         .padding(22)
         .frame(width: 480)
-        .onAppear { format = store.project.format.export }
+        .onAppear { format = store.project.format.export; name = usualName; lastUsual = usualName }
+        // The name follows the format until you change it yourself.
+        .onChange(of: format) { _, _ in
+            if name == lastUsual || name.isEmpty { name = usualName }
+            lastUsual = usualName
+        }
         .onExitCommand { if !working { dismiss() } }
     }
 }

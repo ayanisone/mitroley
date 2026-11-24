@@ -31,6 +31,18 @@ enum Tool: String, CaseIterable, Identifiable {
         }
     }
 
+    var title: String {
+        switch self {
+        case .pointer: "Pointer"
+        case .scissors: "Scissors"
+        case .mute: "Mute"
+        case .solo: "Solo"
+        case .marquee: "Marquee"
+        case .gain: "Gain"
+        case .fade: "Fade"
+        }
+    }
+
     var help: String {
         let k = String(key).uppercased()
         switch self {
@@ -139,6 +151,9 @@ private struct ToolColumn: View {
     @State private var drag: CGFloat?
     @State private var speed: CGFloat = 0
     @State private var pressed = false
+    /// The tool the pointer is resting on, shown with its name and key almost at once.
+    @State private var hovered: Int?
+    @State private var hint: Int?
 
     private var step: CGFloat { cell + gap }
     private var tools: [Tool] { Tool.allCases }
@@ -163,7 +178,6 @@ private struct ToolColumn: View {
                         // Under the lens the icon swells a little, as it would through a drop of water.
                         .scaleEffect(i == under ? (pressed ? 1.3 : 1.16) : 1)
                         .frame(width: cell, height: cell)
-                        .help(t.help)
                         .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.7), value: under)
                         .animation(.spring(response: 0.25, dampingFraction: 0.8), value: pressed)
                 }
@@ -180,6 +194,39 @@ private struct ToolColumn: View {
         }
         .frame(width: cell, height: CGFloat(tools.count) * step - gap)
         .contentShape(Rectangle())
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(let p): hovered = index(at: p.y)
+            case .ended: hovered = nil
+            }
+        }
+        // A quarter of a second, not the system's long wait: the key is what you came to look up.
+        .task(id: hovered) {
+            guard let h = hovered else { hint = nil; return }
+            if hint == nil { try? await Task.sleep(nanoseconds: 250_000_000) }
+            if !Task.isCancelled { hint = h }
+        }
+        .overlay(alignment: .topLeading) {
+            if let h = hint, drag == nil {
+                HStack(spacing: 7) {
+                    Text(tools[h].title).font(.system(size: 12, weight: .semibold))
+                    Text(String(tools[h].key).uppercased())
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .frame(minWidth: 18, minHeight: 18)
+                        .background(Color.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                }
+                .foregroundStyle(.white)
+                .padding(.leading, 10).padding(.trailing, 7).frame(height: 28)
+                .background(Color(white: 0.14), in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.45), radius: 6, y: 2)
+                .fixedSize()
+                .offset(x: cell + 14, y: centre(h) - 14)
+                .allowsHitTesting(false)
+                .transition(.opacity)
+                .help(tools[h].help)
+            }
+        }
         // Responds on press, follows 1:1, and commits to the tool it is over when let go.
         .gesture(DragGesture(minimumDistance: 0)
             .onChanged { g in

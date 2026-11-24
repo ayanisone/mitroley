@@ -373,6 +373,7 @@ struct TrackHeader: View {
                 Button("Show \(p.title) Automation") { edit { $0.lane = p } }
             }
             Divider()
+            Button("Duplicate Track") { store.duplicateTrack(track.id) }
             Button("Move up") { store.moveTrack(track.id, -1) }.disabled(!store.canMoveTrack(track.id, -1))
             Button("Move down") { store.moveTrack(track.id, 1) }.disabled(!store.canMoveTrack(track.id, 1))
             Menu("Export This Track") {

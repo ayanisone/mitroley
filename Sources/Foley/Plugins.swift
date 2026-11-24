@@ -15,6 +15,7 @@ struct PluginSlot: Codable, Equatable, Identifiable {
     var manufacturer: UInt32
     var bypass = false
     var state: Data?        // the plug-in's own settings, as it saved them
+    var preset: String?     // set when this slot is one link of a ready-made sound preset
 
     var description: AudioComponentDescription {
         AudioComponentDescription(componentType: type, componentSubType: subtype, componentManufacturer: manufacturer, componentFlags: 0, componentFlagsMask: 0)
