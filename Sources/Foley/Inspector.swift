@@ -296,8 +296,8 @@ struct TrackPanel: View {
     @Environment(Store.self) private var store
     let track: Track
     @State private var prompt = ""
-    /// A new sound starts at three seconds. Its length is changed on the clip, where more takes are made.
-    private let length = 3.0
+    /// A new sound starts at three seconds (ten for an ambience bed). Its length is changed on the clip, where more takes are made.
+    private var length: Double { track.kind == .ambience ? 10 : 3 }
     @State private var takes = 3
     @State private var loop = false
     @AppStorage("sfxInfluence") private var influence = 0.3
@@ -416,7 +416,7 @@ struct TrackPanel: View {
             Text(track.lane.map { "Showing \($0.title)" } ?? "Show a lane")
         }
         Button("Delete Track") { store.deleteSelection() }.buttonStyle(PillButtonStyle()).padding(.top, 6)
-            .onAppear { loop = track.kind == .ambience; if track.kind == .ambience { length = 10 } }
+            .onAppear { loop = track.kind == .ambience }
     }
 }
 
