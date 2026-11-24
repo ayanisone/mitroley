@@ -657,11 +657,26 @@ final class Store {
         var overall = terms(o.genre) + terms(o.mood) + terms(o.instruments) + terms(style)
         if let bpm = o.tempo { overall.append("\(bpm) BPM") }
         overall = overall.reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
-        let range: ClosedRange<Double> = o.loopOnly ? (project.loopRange ?? 0...project.duration) : 0...project.duration
+        var range: ClosedRange<Double> = o.loopOnly ? (project.loopRange ?? 0...project.duration) : 0...project.duration
+        // A length set by hand: that much music from the playhead (from the loop's start when only the loop is scored),
+        // even past the end of the picture.
+        if given == nil, let manual = o.length {
+            let from = o.loopOnly && project.loopRange != nil ? range.lowerBound : max(0, player.time)
+            range = from...(from + min(600, max(3, manual)))
+        }
         var sections = given ?? (o.followScenes ? project.scenes.sorted { $0.start < $1.start }.map {
             MusicSection(start: $0.start, end: $0.end, cue: $0.name, styles: [])
         } : [])
         if given == nil { sections = sections.filter { $0.end > range.lowerBound && $0.start < range.upperBound } }
+        // Scenes stop where the picture does. Music asked to run longer carries on in the last scene's mood.
+        if given == nil, o.length != nil, var t = sections.map(\.end).max(), t < range.upperBound - 0.01 {
+            let cue = sections.last?.cue ?? project.name
+            while t < range.upperBound - 0.01 {
+                let e = min(range.upperBound, t + 120)
+                sections.append(MusicSection(start: t, end: e, cue: cue, styles: []))
+                t = e
+            }
+        }
         if sections.isEmpty {
             // One continuous piece, cut only where the two-minute limit forces it.
             var t = range.lowerBound

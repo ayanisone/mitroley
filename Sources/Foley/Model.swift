@@ -422,6 +422,7 @@ struct MusicOptions: Codable, Equatable {
     var followScenes = true         // false = one continuous piece
     var loopOnly = false            // score only the loop region
     var strict = true               // true = follow the description closely
+    var length: Double?             // seconds, starting at the playhead. nil = the whole film (or the loop region)
 
     var summary: String {
         [genre, mood, instruments, tempo.map { "\($0) BPM" } ?? ""].filter { !$0.isEmpty }.joined(separator: ", ")

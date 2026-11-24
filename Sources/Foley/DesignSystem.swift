@@ -310,6 +310,52 @@ struct Field<Content: View>: View {
     }
 }
 
+/// A length you type: seconds ("12.5") or minutes and seconds ("1:05"). Empty means "decide for me" where that is allowed.
+struct TimeEntry: View {
+    let seconds: Double?
+    var placeholder = "Auto"
+    var range: ClosedRange<Double> = 0.5...600
+    var width: CGFloat? = 74
+    let change: (Double?) -> Void
+
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    static func parse(_ raw: String) -> Double? {
+        let t = raw.lowercased().replacingOccurrences(of: "s", with: "").trimmingCharacters(in: .whitespaces)
+        if t.contains(":") {
+            let parts = t.split(separator: ":").map { Double($0) }
+            guard parts.count == 2, let m = parts[0], let s = parts[1] else { return nil }
+            return m * 60 + s
+        }
+        return Double(t.replacingOccurrences(of: ",", with: "."))
+    }
+    static func show(_ v: Double) -> String {
+        v < 60 ? (v == v.rounded() ? String(format: "%.0f", v) : String(format: "%.1f", v)) : String(format: "%d:%04.1f", Int(v) / 60, v.truncatingRemainder(dividingBy: 60)).replacingOccurrences(of: ".0", with: "")
+    }
+    private func commit() {
+        if let v = Self.parse(text) { change(min(range.upperBound, max(range.lowerBound, (v * 10).rounded() / 10))) }
+        else if text.trimmingCharacters(in: .whitespaces).isEmpty { change(nil) }
+        // The field then shows what was actually taken, so a typo or an out-of-range number is visible at once.
+        DispatchQueue.main.async { if !focused { text = seconds.map(Self.show) ?? "" } }
+    }
+
+    var body: some View {
+        TextField(placeholder, text: $text)
+            .textFieldStyle(.plain)
+            .font(.system(size: 12, weight: .medium).monospacedDigit())
+            .multilineTextAlignment(.trailing)
+            .focused($focused)
+            .padding(.horizontal, 8).frame(height: 26)
+            .frame(width: width)
+            .background(Theme.raised, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .onSubmit { commit(); focused = false }
+            .onChange(of: focused) { _, on in if !on { commit() } }
+            .onChange(of: seconds, initial: true) { _, v in if !focused { text = v.map(Self.show) ?? "" } }
+            .help("Type a length: seconds, such as 12.5, or minutes and seconds, such as 1:05.")
+    }
+}
+
 struct SectionTitle: View {
     let text: String
     init(_ text: String) { self.text = text }
