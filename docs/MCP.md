@@ -54,6 +54,7 @@ Restart Claude, open mitroley with a session, and ask Claude to "look at the mit
 | Tracks and clips | `add_track`, `update_track` (also reorders with `index`), `delete_track`, `set_group`, `add_audio_clip`, `update_clip`, `delete_clip`, `crossfade`, `set_automation` |
 | Sound and music | `generate_sfx`, `generate_missing`, `measure_takes`, `place_steps`, `original_sound`, `compose_music` |
 | Voice | `transcribe_voices`, `list_voices`, `speak_line` |
+| Library and presets | `search_library` (your own sounds, by name, shape, tone and length), `set_preset` (a ready-made sound on a track: phone, radio, underwater and more), `carve_for_voice` (lowers only the voice's frequencies in the music) |
 | Mix | `set_master` (the master effects rack: compressor, limiter, surround reverb, fold-down trims, loudness meter), `measure_mix` (LUFS and true peak of every format), `set_monitor` (monitoring and session format) |
 | Transport and delivery | `transport`, `set_loop`, `export` |
 

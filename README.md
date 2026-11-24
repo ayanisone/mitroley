@@ -54,6 +54,10 @@ Two ways in, both using the same commands (`Sources/Foley/Commands.swift`):
 | --- | --- |
 | Session format | 7.1.4, 5.1, binaural or stereo, chosen in the transport bar (new sessions take the default from Settings). It decides which speakers the panner and the Room window show and which export is offered first. Every other format can still be exported from it. On a Mac you always listen in two channels: binaurally for the spatial formats, plainly for stereo. |
 | Panner | A top-down disc for each spatial track. Speakers light up with the signal they get, the lit arc on the rim shows how widely the sound is spread, and the glow grows as it is lifted. Shift-drag for fine moves, double-click to centre. |
+| Mixer | A window with every track as a channel strip: fader, pan, mute, solo and a meter, and the master at the end (⌥⌘M). |
+| Sound presets | On any track: Phone call, AM radio, Walkie-talkie, Underwater, Behind a wall, Old record, Robot and more. Each is a short chain of the effects that come with macOS, so it is light, plays live and is in every export. |
+| Room for the voice | On a music track: lowers only the frequencies the voice is using, only while it speaks. Written as a new take, so the original is one click away. |
+| Library | Your own sounds, measured once and found by shape (click, hit, rise, swell, steady, pulsing), tone, length and pitch (⌥⌘L). Claude looks here before it generates. |
 | Master effects | Click the output meter for the rack. It starts empty, so the mix goes out untouched; add an effect when you need it, bypass it with its switch, remove it with ×. |
 | Compressor, Limiter | Linked across every channel (one gain from the loudest channel, applied to all, so the image never moves and no channel clips), on the live output and in every export except stems. The limiter also holds the 5.1 and stereo fold-downs under its ceiling. |
 | Surround reverb | In surround exports, gives the side, rear and height speakers their own decorrelated copy of each space's reverb. |
@@ -93,6 +97,8 @@ offline and checks scene-following reverb, muffling, sample-locked tracks, panni
 and every export format.
 
 ## Sharing
+
+File › Share Session packs a session into one .zip with its video and sounds. The other person unzips it and double-clicks the `.mitroley` inside.
 
 `docs/SHARING.md` covers putting this on GitHub, how other people install it and how to send updates.
 `docs/MCP.md` covers connecting it to Claude.
