@@ -60,13 +60,14 @@ final class Commands {
              ["name": p("string", "Session name.")], required: ["name"]),
         tool("import_video", "Loads a video file into the session. The timeline takes the video's length and shots are detected automatically.",
              ["path": p("string", "Absolute path to the video file.")], required: ["path"]),
-        tool("analyze_video", "Detects shot cuts and returns still frames so you can see what happens in the picture: one frame at the start of every shot plus frames at a regular interval, each labelled with its time. Use it to work out where the action is, which room or place each moment is in, and when on-screen events happen.",
+        tool("analyze_video", "Detects shot cuts and shows you the picture. With no arguments: one strip per shot, each strip being up to six moments of that shot side by side with its time written on it (read left to right, then the next row), so you see what moves inside the shot and not just what is in it. Compare the cells of a strip: a foot pressing a lever, a hand turning a grip, a finger on a switch, a door starting to move are small changes between cells, and each is a sound. With start and end: single full frames of that stretch, for exact timing.",
              ["start": p("number", "Only look from this time. Use with end to study one stretch closely, e.g. 4 frames a second inside a shot to follow something moving."),
               "end": p("number", "Only look up to this time."),
               "interval": p("number", "Seconds between sampled frames. Default: about 1 s, widened until the frames fit max_frames."),
               "max_frames": p("integer", "Upper limit on frames returned. Default 24, maximum 40.")]),
-        tool("get_frames", "Returns still frames at exact times, for a closer look at a moment (a door closing, a foot landing, a character crossing a doorway).",
-             ["times": ["type": "array", "items": ["type": "number"], "description": "Times in seconds. Up to 12."]], required: ["times"]),
+        tool("get_frames", "Returns still frames at exact times, for a closer look at a moment (a door closing, a foot landing, a character crossing a doorway). Pass region to enlarge one part of the picture when the thing that matters is small in frame: a boot on a gear lever, a hand on a control, a latch.",
+             ["times": ["type": "array", "items": ["type": "number"], "description": "Times in seconds. Up to 12."],
+              "region": ["type": "array", "items": ["type": "number"], "description": "Part of the picture to enlarge: x, y, width, height as fractions of the frame from the top left, e.g. [0.1, 0, 0.45, 0.6] for the upper left."]], required: ["times"]),
         tool("list_space_templates", "Lists the built-in acoustic spaces (Living Room, Cave, Street, Next Room …) with their settings."),
         tool("define_space", "Creates or updates an acoustic space by name. A space is what a place sounds like: its reverb, echo, how dark the reflections are, and how muffled or quiet direct sound becomes there. Start from a template and adjust only what differs.",
              ["name": p("string", "Name shown in the scene lane, e.g. \"Dining room\"."),
@@ -281,6 +282,13 @@ final class Commands {
         case "get_frames":
             guard store.videoURL != nil else { throw CommandError("There is no video in the session yet.") }
             let times = ((a["times"] as? [Any]) ?? []).compactMap { ($0 as? NSNumber)?.doubleValue }.prefix(12)
+            let box = ((a["region"] as? [Any]) ?? []).compactMap { ($0 as? NSNumber)?.doubleValue }
+            if box.count == 4, box[2] > 0, box[3] > 0 {
+                let region = CGRect(x: min(0.95, max(0, box[0])), y: min(0.95, max(0, box[1])), width: min(1, box[2]), height: min(1, box[3]))
+                let frames = await store.writeFrames(at: Array(times), region: region)
+                return CommandResult(json: ["frames": frames.map { ["time": r($0.time), "path": $0.path] }, "region": box],
+                                     images: frames.map { (String(format: "Enlarged part of the frame at %.2f s", $0.time), $0.path) })
+            }
             let frames = await store.writeFrames(at: Array(times))
             return CommandResult(json: ["frames": frames.map { ["time": r($0.time), "path": $0.path] }],
                                  images: frames.map { (String(format: "Frame at %.2f s", $0.time), $0.path) })
@@ -850,6 +858,21 @@ final class Commands {
         guard let url = store.videoURL, let video = store.project.video else { throw CommandError("There is no video in the session yet. Use import_video first.") }
         let cuts = await VideoAnalysis.detectCuts(url)
         let shots = Store.scenes(from: cuts, duration: video.duration)
+        // The first look at a film: every shot as a strip of moments, so what moves inside each shot is visible.
+        if a.num("start") == nil, a.num("end") == nil, a.num("interval") == nil, shots.count <= 60 {
+            let strips = await store.writeStrips(shots: shots.map { ($0.start, $0.end) })
+            if !strips.isEmpty {
+                return CommandResult(
+                    json: ["duration": r(video.duration), "fps": video.fps, "width": video.width, "height": video.height,
+                           "shots": shots.enumerated().map { ["shot": $0 + 1, "start": r($1.start), "end": r($1.end)] },
+                           "strips": strips.map { ["shot": $0.shot, "times": $0.times.map(r), "path": $0.path] },
+                           "note": "Each picture is one shot: several moments of it side by side, left to right then the next row, each with its time on it. Compare the cells to see what moves. Small actions on controls (a foot on a gear lever or pedal, a hand on a throttle, clutch or brake lever, a thumb on a switch) are easy to miss and each needs its own sound: where a shot is a close-up of a body part on a control, look again with get_frames and a region, or analyze_video with start and end, before deciding nothing happens. Cuts are detected from picture changes; dissolves are not cuts."],
+                    images: strips.map { s in
+                        (String(format: "Shot %d, %.2f to %.2f s. Moments at ", s.shot, shots[s.shot - 1].start, shots[s.shot - 1].end)
+                            + s.times.map { String(format: "%.2f", $0) }.joined(separator: ", ") + " s", s.path)
+                    })
+            }
+        }
         let maxFrames = min(40, max(4, Int(a.num("max_frames") ?? 24)))
         var interval = a.num("interval") ?? 1.0
         var times: [Double] = []

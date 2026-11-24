@@ -94,6 +94,46 @@ enum VideoAnalysis {
         return try? await gen.image(at: CMTime(seconds: t, preferredTimescale: 600)).image
     }
 
+    /// Part of a frame, enlarged: `region` is x, y, width, height as fractions of the picture, from the top left.
+    static func frame(_ url: URL, at t: Double, region: CGRect, maxSize: CGFloat) async -> CGImage? {
+        // Decoded large enough that the cut-out part still has detail.
+        let scale = 1 / max(0.05, min(1, max(region.width, region.height)))
+        guard let full = await frame(url, at: t, maxSize: min(3840, maxSize * scale)) else { return nil }
+        let w = CGFloat(full.width), h = CGFloat(full.height)
+        let r = CGRect(x: region.minX * w, y: region.minY * h, width: region.width * w, height: region.height * h)
+            .intersection(CGRect(x: 0, y: 0, width: w, height: h)).integral
+        guard r.width >= 8, r.height >= 8 else { return full }
+        return full.cropping(to: r) ?? full
+    }
+
+    /// Several moments of one shot side by side in one picture, each with its time written on it, so movement inside
+    /// the shot can be seen: a foot pressing a lever, a hand turning, a door starting to close.
+    static func strip(_ url: URL, times: [Double], columns: Int, cell: CGFloat) async -> CGImage? {
+        var frames: [(Double, CGImage)] = []
+        for t in times { if let f = await frame(url, at: t, maxSize: cell) { frames.append((t, f)) } }
+        guard let first = frames.first?.1 else { return nil }
+        let cw = first.width, ch = first.height, gap = 4
+        let cols = min(columns, frames.count), rows = Int(ceil(Double(frames.count) / Double(cols)))
+        let W = cols * cw + (cols - 1) * gap, H = rows * ch + (rows - 1) * gap
+        guard let ctx = CGContext(data: nil, width: W, height: H, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.setFillColor(CGColor(gray: 0, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: W, height: H))
+        let g = NSGraphicsContext(cgContext: ctx, flipped: false)
+        for (i, (t, img)) in frames.enumerated() {
+            let x = (i % cols) * (cw + gap), y = H - ch - (i / cols) * (ch + gap)
+            ctx.draw(img, in: CGRect(x: x, y: y, width: cw, height: ch))
+            let label = NSAttributedString(string: String(format: " %.2f s ", t), attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: max(13, CGFloat(cw) / 22), weight: .semibold),
+                .foregroundColor: NSColor.white, .backgroundColor: NSColor.black.withAlphaComponent(0.7)])
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = g
+            label.draw(at: CGPoint(x: x + 6, y: y + 6))
+            NSGraphicsContext.restoreGraphicsState()
+        }
+        return ctx.makeImage()
+    }
+
     static func writeJPEG(_ image: CGImage, to url: URL, quality: Double = 0.8) -> Bool {
         guard let dest = CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil) else { return false }
         CGImageDestinationAddImage(dest, image, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)

@@ -45,6 +45,12 @@ final class AgentState {
     1. Call get_project, then analyze_video to see the picture. Read the storyboard if there is one; it tells you \
     intent the frames cannot. Wherever a boundary, an event or a movement is unclear, look closer: get_frames for \
     exact moments, or analyze_video with start and end to step through one shot several frames a second.
+    Every shot comes as a strip of moments: compare its cells and name what changes between them, not only what the \
+    shot shows. A close-up exists to show an action. When a shot is a close-up of a hand, foot or finger on a control \
+    (a boot on a gear lever or brake pedal, a hand on a throttle, clutch or brake lever, a thumb on a switch, a key, \
+    a latch, a buckle), assume the control is being worked: enlarge it with get_frames and region, find the moment it \
+    moves, and give it its own sound on that moment (gear change clunk, lever click, switch tick), as well as any \
+    engine or ambience under it. Do not label such a shot by its background alone.
     2. Decide where the acoustic space changes. That is often at a cut, but a move between rooms inside one shot \
     counts too, with a transition of a second or more.
     3. Define the spaces the film needs (start from templates), then write the scene lane with set_scenes.

@@ -345,6 +345,37 @@ final class Store {
         return out
     }
 
+    /// One strip per shot: six moments of it side by side (fewer for a very short shot).
+    func writeStrips(shots: [(start: Double, end: Double)]) async -> [(shot: Int, times: [Double], path: String)] {
+        guard let url = videoURL else { return [] }
+        let dir = subfolder("Frames")
+        var out: [(Int, [Double], String)] = []
+        for (i, s) in shots.enumerated() {
+            let length = s.end - s.start
+            let n = length < 0.4 ? 2 : length < 0.9 ? 4 : 6
+            // Evenly through the shot, a little in from each cut so no frame shows the neighbouring shot.
+            let inset = min(0.06, length / 8)
+            let times = (0..<n).map { k in s.start + inset + (length - 2 * inset) * Double(k) / Double(max(1, n - 1)) }
+            guard let img = await VideoAnalysis.strip(url, times: times, columns: 3, cell: 448) else { continue }
+            let file = dir.appendingPathComponent(String(format: "shot_%03d.jpg", i + 1))
+            if VideoAnalysis.writeJPEG(img, to: file) { out.append((i + 1, times, file.path)) }
+        }
+        return out
+    }
+
+    /// Stills of one part of the picture, enlarged.
+    func writeFrames(at times: [Double], region: CGRect, maxSize: CGFloat = 768) async -> [(time: Double, path: String)] {
+        guard let url = videoURL else { return [] }
+        let dir = subfolder("Frames")
+        var out: [(Double, String)] = []
+        for t in times {
+            guard let img = await VideoAnalysis.frame(url, at: t, region: region, maxSize: maxSize) else { continue }
+            let file = dir.appendingPathComponent(String(format: "zoom_%07.2fs.jpg", t))
+            if VideoAnalysis.writeJPEG(img, to: file) { out.append((t, file.path)) }
+        }
+        return out
+    }
+
     // MARK: Scenes and spaces
 
     func splitScene(at t: Double) {
