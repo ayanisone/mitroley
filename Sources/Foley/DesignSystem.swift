@@ -356,6 +356,34 @@ struct TimeEntry: View {
     }
 }
 
+/// Length of something to be generated: decided automatically, or set by hand with a slider and a box to type in.
+struct LengthChoice: View {
+    let seconds: Double?            // nil = automatic
+    let auto: String                // what automatic means here, e.g. "the whole film"
+    var range: ClosedRange<Double> = 3...600
+    var start: Double = 30          // where the slider begins when switched to manual
+    var tint: Color = Theme.accent
+    let change: (Double?) -> Void
+
+    var body: some View {
+        Field(title: "Length", value: seconds.map(shortTime) ?? "Auto: \(auto)") {
+            SegmentedPill(options: [(false, "Auto"), (true, "Manual")], selection: seconds != nil, segmentWidth: 104) { manual in
+                change(manual ? min(range.upperBound, max(range.lowerBound, start)) : nil)
+            }
+            .frame(maxWidth: .infinity)
+            if let seconds {
+                HStack(spacing: 8) {
+                    Slide(value: seconds, range: range, log: true, tint: tint, reset: nil, begin: {}) { v in
+                        // Whole seconds above ten, tenths below: fine control where it matters.
+                        change(v >= 10 ? v.rounded() : (v * 10).rounded() / 10)
+                    }
+                    TimeEntry(seconds: seconds, placeholder: "", range: range, width: 62) { v in if let v { change(v) } }
+                }
+            }
+        }
+    }
+}
+
 struct SectionTitle: View {
     let text: String
     init(_ text: String) { self.text = text }

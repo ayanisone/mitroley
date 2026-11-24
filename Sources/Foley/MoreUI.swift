@@ -296,9 +296,9 @@ struct ScoreSection: View {
                 set { $0.tempo = v < 54 ? nil : Int((v / 2).rounded()) * 2 }
             }
         }
-        Field(title: "Length", value: o.length == nil ? "Auto: \(store.project.loopRange != nil && o.loopOnly ? "the loop region" : "the whole film")" : "From the playhead") {
-            TimeEntry(seconds: o.length, placeholder: "Auto. Or type a length, such as 45 or 1:05", range: 3...600, width: nil) { v in set { $0.length = v } }
-        }
+        LengthChoice(seconds: o.length, auto: store.project.loopRange != nil && o.loopOnly ? "the loop region" : "the whole film",
+                     start: store.project.duration, tint: track.kind.color) { v in set { $0.length = v } }
+        if o.length != nil { Caption("Starts at the playhead, and may run shorter or longer than the film.") }
         SegmentedPill(options: [(false, "Instrumental"), (true, "With vocals")], selection: o.vocals, segmentWidth: 104) { v in set { $0.vocals = v } }
             .frame(maxWidth: .infinity)
         if o.vocals {

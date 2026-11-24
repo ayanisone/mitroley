@@ -125,6 +125,9 @@ struct ClipPanel: View {
     let clip: Clip
     let track: Track
     @State private var moreCount = 2
+    /// Length of the next takes. nil = as long as the clip is (sound), or the whole film (music).
+    @State private var newLength: Double?
+    @AppStorage("sfxInfluence") private var influence = 0.3
 
     private func live(_ change: @escaping (inout Clip) -> Void) {
         store.live { p in if let l = p.locate(clip: clip.id) { change(&p.tracks[l.track].clips[l.clip]) } }
@@ -136,6 +139,8 @@ struct ClipPanel: View {
     }
 
     var body: some View {
+        // A length chosen for one clip does not carry over to the next one selected.
+        Color.clear.frame(height: 0).onChange(of: clip.id) { _, _ in newLength = nil }
         PanelTitle(title: clip.name, subtitle: "Clip · \(track.name)")
         QuietField(placeholder: "Name", text: Binding(get: { clip.name }, set: { v in live { $0.name = v } }))
 
@@ -194,14 +199,40 @@ struct ClipPanel: View {
                 }
             }
         }
-        QuietEditor(placeholder: track.kind == .dialogue ? "What is said" : "Describe the sound to generate more takes", text: Binding(get: { clip.prompt }, set: { v in live { $0.prompt = v } }), height: 58)
+        QuietEditor(placeholder: track.kind == .dialogue ? "What is said" : track.kind == .music ? "Describe the music: genre, mood, instruments" : "Describe the sound to generate more takes", text: Binding(get: { clip.prompt }, set: { v in live { $0.prompt = v } }), height: 58)
+        if track.kind == .music {
+            LengthChoice(seconds: newLength, auto: "the whole film", start: min(600, max(3, clip.duration)), tint: track.kind.color) { newLength = $0 }
+            Caption(newLength == nil ? "The new piece covers the film from start to end." : "The new piece starts where this clip starts. It may run shorter or longer than the film.")
+            Button(clip.pending > 0 ? "Composing…" : "Compose Another Take") {
+                let length = newLength
+                Task { await store.recompose(clip.id, length: length) }
+            }
+            .buttonStyle(PillButtonStyle(prominent: true))
+            .disabled(clip.prompt.trimmingCharacters(in: .whitespaces).isEmpty || clip.pending > 0)
+        } else {
+        if track.kind != .dialogue {
+            let length = newLength ?? min(30, max(0.5, clip.duration))
+            Field(title: "Length", value: shortTime(length)) {
+                HStack(spacing: 8) {
+                    Slide(value: length, range: 0.5...30, log: true, tint: track.kind.color, reset: min(30, max(0.5, clip.duration)), begin: {}) { newLength = ($0 * 10).rounded() / 10 }
+                    TimeEntry(seconds: length, placeholder: "", range: 0.5...30, width: 56) { newLength = $0 }
+                }
+            }
+            .help("How long the next takes are. ElevenLabs makes sounds from half a second to 30 seconds.")
+            Field(title: "Prompt influence", value: String(format: "%.0f%%", influence * 100)) {
+                Slide(value: influence, range: 0...1, tint: track.kind.color, reset: 0.3, begin: {}) { influence = ($0 * 20).rounded() / 20 }
+            }
+            .help("How literally ElevenLabs follows the description. Higher is closer to the words with less variety between takes; lower is freer.")
+        }
         HStack {
             Button("Generate \(moreCount) More") {
-                Task { await store.moreTakes(for: clip.id, count: moreCount) }
+                let length = track.kind == .dialogue ? nil : newLength, influence = influence
+                Task { await store.moreTakes(for: clip.id, count: moreCount, influence: influence, duration: length) }
             }
             .buttonStyle(PillButtonStyle(prominent: true))
             .disabled(clip.prompt.trimmingCharacters(in: .whitespaces).isEmpty || clip.pending > 0 || (track.kind == .dialogue && clip.voiceID == nil))
             Stepper("", value: $moreCount, in: 1...4).labelsHidden()
+        }
         }
 
         SectionTitle("Level and shape")

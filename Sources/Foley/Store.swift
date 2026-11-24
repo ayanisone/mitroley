@@ -566,8 +566,28 @@ final class Store {
     }
 
     /// Adds more takes to an existing clip from its prompt.
-    func moreTakes(for clipID: UUID, count: Int, influence: Double = 0.3) async {
+    /// `duration`: how long the new takes should be. nil = as long as the clip is now.
+    func moreTakes(for clipID: UUID, count: Int, influence: Double = 0.3, duration: Double? = nil) async {
+        if let duration {
+            // The clip takes the new length, so the new takes are heard in full.
+            mutate { p in if let l = p.locate(clip: clipID) { p.tracks[l.track].clips[l.clip].duration = min(30, max(0.5, duration)) } }
+        }
         await fetchTakes(for: clipID, count: count, influence: influence, marked: false)
+    }
+
+    /// Composes another version of a music clip from its description. `length` nil = the whole film from its start;
+    /// otherwise that many seconds from where the clip starts.
+    func recompose(_ clipID: UUID, length: Double?) async {
+        guard let l = project.locate(clip: clipID) else { return }
+        let clip = project.tracks[l.track].clips[l.clip]
+        // The clip's own description is the style; how it is sung and what to leave out come from the session's music settings.
+        var o = project.music ?? MusicOptions()
+        o.genre = clip.prompt; o.mood = ""; o.instruments = ""; o.tempo = nil
+        o.loopOnly = false
+        o.length = length
+        do {
+            try await composeMusic(style: "", track: project.tracks[l.track].id, options: o, into: clipID, from: length == nil ? nil : clip.start)
+        } catch { say(error.localizedDescription, error: true) }
     }
 
     private func fetchTakes(for clipID: UUID, count: Int, influence: Double, marked: Bool) async {
@@ -649,7 +669,10 @@ final class Store {
     /// Composes a score that follows the film section by section and places it on a music track.
     /// With no sections given, the scene lane is used: one section per scene.
     @discardableResult
-    func composeMusic(style: String, sections given: [MusicSection]? = nil, track: UUID? = nil, options: MusicOptions? = nil) async throws -> UUID {
+    /// `into`: an existing music clip that gets the new piece as another take, instead of a new clip being made.
+    /// `from`: where a piece of a hand-set length starts; the playhead when not given.
+    func composeMusic(style: String, sections given: [MusicSection]? = nil, track: UUID? = nil, options: MusicOptions? = nil,
+                      into existing: UUID? = nil, from: Double? = nil) async throws -> UUID {
         let o = options ?? MusicOptions()
         func terms(_ text: String) -> [String] {
             text.split(whereSeparator: { ",;\n".contains($0) }).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
@@ -661,7 +684,7 @@ final class Store {
         // A length set by hand: that much music from the playhead (from the loop's start when only the loop is scored),
         // even past the end of the picture.
         if given == nil, let manual = o.length {
-            let from = o.loopOnly && project.loopRange != nil ? range.lowerBound : max(0, player.time)
+            let from = from ?? (o.loopOnly && project.loopRange != nil ? range.lowerBound : max(0, player.time))
             range = from...(from + min(600, max(3, manual)))
         }
         var sections = given ?? (o.followScenes ? project.scenes.sorted { $0.start < $1.start }.map {
@@ -739,12 +762,23 @@ final class Store {
         else { trackID = addTrack(kind: .music, name: "Music") }
 
         var clip = Clip(name: "Score", start: start, duration: length)
-        clip.prompt = overall.joined(separator: ", ")
-        clip.fadeIn = 0.05
-        clip.fadeOut = 0.8
-        clip.gain = -6
-        clip.pending = 1
-        mutate { p in if let i = p.trackIndex(trackID) { p.tracks[i].clips.append(clip) } }
+        if let existing, let l = project.locate(clip: existing) {
+            // Another take of a piece that is already there.
+            clip = project.tracks[l.track].clips[l.clip]
+            live { p in
+                guard let l = p.locate(clip: existing) else { return }
+                p.tracks[l.track].clips[l.clip].pending += 1
+                p.tracks[l.track].clips[l.clip].error = nil
+            }
+        } else {
+            clip.prompt = overall.joined(separator: ", ")
+            clip.fadeIn = 0.05
+            clip.fadeOut = 0.8
+            clip.gain = -6
+            clip.pending = 1
+            mutate { p in if let i = p.trackIndex(trackID) { p.tracks[i].clips.append(clip) } }
+        }
+        let another = existing != nil
         let audio = subfolder("Audio")
         do {
             let r = try await ElevenLabs.music(chunks: chunks)
@@ -754,14 +788,20 @@ final class Store {
             guard d > 0 else { throw ServiceError(message: "ElevenLabs returned music that could not be read.") }
             live { p in
                 guard let l = p.locate(clip: clip.id) else { return }
-                p.tracks[l.track].clips[l.clip].pending = 0
+                p.tracks[l.track].clips[l.clip].pending = max(0, p.tracks[l.track].clips[l.clip].pending - 1)
                 p.tracks[l.track].clips[l.clip].takes.append(Take(file: "Audio/" + file.lastPathComponent, duration: d))
                 p.tracks[l.track].clips[l.clip].duration = min(length, d)
+                if another {
+                    // The new piece becomes the one that plays, placed where it was asked for.
+                    p.tracks[l.track].clips[l.clip].activeTake = p.tracks[l.track].clips[l.clip].takes.count - 1
+                    p.tracks[l.track].clips[l.clip].start = start
+                    p.tracks[l.track].clips[l.clip].loop = false
+                }
             }
         } catch {
             live { p in
                 guard let l = p.locate(clip: clip.id) else { return }
-                p.tracks[l.track].clips[l.clip].pending = 0
+                p.tracks[l.track].clips[l.clip].pending = max(0, p.tracks[l.track].clips[l.clip].pending - 1)
                 p.tracks[l.track].clips[l.clip].error = error.localizedDescription
             }
             throw error
