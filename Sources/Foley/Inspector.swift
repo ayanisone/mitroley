@@ -296,7 +296,8 @@ struct TrackPanel: View {
     @Environment(Store.self) private var store
     let track: Track
     @State private var prompt = ""
-    @State private var length = 3.0
+    /// A new sound starts at three seconds. Its length is changed on the clip, where more takes are made.
+    private let length = 3.0
     @State private var takes = 3
     @State private var loop = false
     @AppStorage("sfxInfluence") private var influence = 0.3
@@ -322,13 +323,6 @@ struct TrackPanel: View {
         if track.kind != .music && track.kind != .dialogue {
         SectionTitle("New sound")
         QuietEditor(placeholder: "Describe a sound, e.g. \"single footstep on wet stone, close\"", text: $prompt, height: 58)
-        Field(title: "Length", value: shortTime(length)) {
-            HStack(spacing: 8) {
-                Slide(value: length, range: 0.5...30, log: true, tint: track.kind.color, reset: 3, begin: {}) { length = ($0 * 10).rounded() / 10 }
-                TimeEntry(seconds: length, placeholder: "3", range: 0.5...30, width: 56) { length = $0 ?? 3 }
-            }
-        }
-        .help("How long the sound is. Drag, or type the seconds. ElevenLabs makes sounds from half a second to 30 seconds.")
         Field(title: "Prompt influence", value: String(format: "%.0f%%", influence * 100)) {
             Slide(value: influence, range: 0...1, tint: track.kind.color, reset: 0.3, begin: {}) { influence = ($0 * 20).rounded() / 20 }
         }
