@@ -231,6 +231,14 @@ final class Commands {
         tool("set_monitor", "Switches live monitoring between plain stereo and the spatial (binaural / Atmos-style) render, and/or sets what the session is mixed for. The format decides which speakers the Room window shows and which export is offered first; every format can still be exported.",
              ["mode": p("string", "stereo or spatial.", extra: ["enum": ["stereo", "spatial"]]),
               "format": p("string", "Session mix format.", extra: ["enum": MixFormat.allCases.map(\.rawValue)])]),
+        tool("search_library", "Searches the person's own sound library (files on this Mac, measured once). Look here FIRST for interface sounds (clicks, ticks, pops, notifications), abstract or designed sounds (whooshes, risers, hits, stingers) and anything that does not depend on the place in the picture: a sound that already exists costs nothing and is consistent across films. Place a result with add_audio_clip using its path. Generate only what the library does not have.",
+             ["text": p("string", "Words to match in the sound's name or folder, e.g. \"click\", \"whoosh\"."),
+              "shape": p("string", "How its loudness moves: click (very short), hit (loud then dies), rise (builds to the end), swell (builds then falls), steady (a bed), pulsing (repeats), mixed.", extra: ["enum": SoundItem.Shape.allCases.map(\.rawValue)]),
+              "tone": p("string", "Where its weight sits.", extra: ["enum": SoundItem.Tone.allCases.map(\.rawValue)]),
+              "min_seconds": p("number", "Shortest length."), "max_seconds": p("number", "Longest length."),
+              "limit": p("integer", "How many to return. Default 20, maximum 60.")]),
+        tool("carve_for_voice", "Makes room for the voice inside the music on a music track (a side-chained EQ): at each moment only the frequencies the voice is using are lowered, and only while it speaks, so the music keeps its bass and its air. Better than lowering the whole track when the music should stay present under speech. Each clip gets a new take; the original stays as the take before it. Finds the voice on Voice-over tracks and in the film's own sound when that is turned up.",
+             ["track": p("string", "The music track's name or id."), "max_cut_db": p("number", "The most any frequency is lowered, 3…18 dB. Default 9.")], required: ["track"]),
         tool("set_preset", "Gives a track a ready-made sound: a short chain of built-in effects, already set, that runs live and in every export. Use it when the picture says the sound comes through something or from somewhere: a voice on a phone, a radio in the room, music from next door, a scene underwater. Replaces any preset already on the track. Presets: " + SoundPreset.all.map { "\($0.name) (\($0.about))" }.joined(separator: " ") + " Pass \"none\" to remove it.",
              ["track": p("string", "Track name or id."), "preset": p("string", "The preset's name, or none.")], required: ["track", "preset"]),
         tool("set_master", "Edits the master effects rack. Nothing is applied to the mix unless an effect is in the rack and on; a new session has an empty rack. Passing any setting of an effect adds that effect. compressor and limiter are linked across every channel (one gain from the loudest channel, applied to all, so the image never shifts and no channel clips) and run live and in every export except stems. surround_reverb gives side, rear and height speakers their own decorrelated copy of each space's reverb in surround exports. trims set surround and height levels in fold-downs. loudness is a meter only. Only the fields you pass change.",
@@ -666,6 +674,26 @@ final class Commands {
                 store.player.monitor = m
             }
             return CommandResult(json: ["ok": true, "format": store.project.format.rawValue, "monitor": store.player.monitor.rawValue])
+        case "search_library":
+            let lib = store.library
+            if lib.items.isEmpty { await lib.scan() }
+            let found = lib.find(text: a.str("text") ?? "", shape: SoundItem.Shape(rawValue: a.str("shape") ?? ""), tone: SoundItem.Tone(rawValue: a.str("tone") ?? ""),
+                                 minLength: a.num("min_seconds") ?? 0, maxLength: a.num("max_seconds") ?? .infinity)
+            let limit = min(60, max(1, Int(a.num("limit") ?? 20)))
+            return CommandResult(json: ["library_size": lib.items.count, "matches": found.count,
+                                        "sounds": found.prefix(limit).map { i -> [String: Any] in
+                                            var d: [String: Any] = ["path": i.path, "name": i.name, "folder": i.folder, "seconds": r(i.duration), "shape": i.shape.rawValue,
+                                                                    "tone": i.tone.rawValue, "peak_db": r(i.peakDB)]
+                                            if let n = i.note { d["note"] = n }
+                                            return d
+                                        },
+                                        "note": lib.items.isEmpty ? "The library is empty. The person can add sounds in the Library window." : ""])
+        case "carve_for_voice":
+            let ti = try trackIndex(a)
+            let before = store.project.tracks[ti].clips.map(\.takes.count)
+            await store.carveForVoice(store.project.tracks[ti].id, maxCut: min(18, max(3, a.num("max_cut_db") ?? 9)))
+            let after = store.project.tracks[ti].clips.map(\.takes.count)
+            return CommandResult(json: ["ok": true, "clips_changed": zip(before, after).filter { $0 != $1 }.count])
         case "set_preset":
             let ti = try trackIndex(a)
             let want = (a.str("preset") ?? "").lowercased()

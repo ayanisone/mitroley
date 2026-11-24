@@ -393,6 +393,7 @@ struct SettingsSheet: View {
     @AppStorage("exportsFolder") private var exportsFolder = ""
     @AppStorage("autosaveSeconds") private var autosave = 0.0
     @AppStorage("hoverHelp") private var hoverHelp = true
+    @AppStorage("startupSound") private var startupSound = true
     @AppStorage("voiceAgentVoice") private var helperVoice = ""
     @AppStorage("voiceAgentVoiceName") private var helperVoiceName = ""
     @AppStorage("voiceAgentStyle") private var helperStyle = ""
@@ -477,6 +478,8 @@ struct SettingsSheet: View {
                 Text("Every 5 minutes").tag(300.0)
                 Text("Every 10 minutes").tag(600.0)
             }
+            Toggle("Play a sound when mitroley opens", isOn: $startupSound)
+                .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
             Toggle("Show a hint when the pointer rests on a button", isOn: $hoverHelp)
                 .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
                 .onChange(of: hoverHelp) { _, _ in store.applyHoverHelp() }

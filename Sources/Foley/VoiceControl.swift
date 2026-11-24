@@ -78,6 +78,7 @@ extension VoiceAgent {
             let all = place == "all"
             if all || place == "settings" { store.showSettings = false }
             if all || place == "export" { store.showExport = false }
+            if all || place == "dub" { store.showDub = false }
             if all || place == "claude" { store.showClaude = false }
             if all || place.hasPrefix("master") { store.showMaster = false }
             if all || place == "side_panel" || place == "session" { store.selection = .none }

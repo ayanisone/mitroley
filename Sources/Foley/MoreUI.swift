@@ -256,6 +256,7 @@ struct ScoreSection: View {
     @Environment(Store.self) private var store
     let track: Track
     @State private var composing = false
+    @AppStorage("carveDepth") private var carve = 9.0
 
     static let genres = ["Cinematic orchestral", "Epic trailer", "Ambient", "Electronic", "Synthwave", "Lo-fi", "Pop", "Rock", "Hip-hop",
                          "Jazz", "Acoustic folk", "Solo piano", "Corporate upbeat", "Indian classical fusion", "Bollywood"]
@@ -327,6 +328,14 @@ struct ScoreSection: View {
             .disabled(composing || o.summary.isEmpty)
             Button("Import…") { Panels.importAudio(store, track: track.id) }.buttonStyle(PillButtonStyle())
         }
+
+        SectionTitle("Room for the voice")
+        Field(title: "Most it takes out", value: String(format: "%.0f dB", carve)) {
+            Slide(value: carve, range: 3...18, tint: track.kind.color, reset: 9, begin: {}) { carve = $0.rounded() }
+        }
+        Button("Carve Room for the Voice") { Task { await store.carveForVoice(track.id, maxCut: carve) } }
+            .buttonStyle(PillButtonStyle())
+        Caption("Lowers only the frequencies the voice is using, only while it speaks, so the music keeps its bass and air. Each clip gets a new take; the one before it is the original.")
 
         SectionTitle("Follow the film")
         Toggle("Duck under voice", isOn: Binding(get: { track.duck != nil }, set: { v in

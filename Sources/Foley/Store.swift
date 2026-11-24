@@ -92,6 +92,11 @@ final class Store {
     var canUndo = false
     var canRedo = false
     let player = Player()
+    var showDub = false
+    /// Languages being dubbed right now, and how each is getting on.
+    var dubJobs: [DubJob] = []
+    /// Your own sounds, indexed.
+    @ObservationIgnored let library = Library()
     /// Claude, up to four at once: each has its own conversation and sees a note of what the others are doing.
     var agents: [AgentState] = [AgentState(name: "Agent 1")]
     var agentIndex = 0
@@ -866,6 +871,24 @@ final class Store {
         return clip.id
     }
 
+    /// The library sound being listened to, by its path.
+    var auditionPath: String?
+
+    /// Plays a file on its own (a library sound); the same file again stops it.
+    func audition(path: String) {
+        let same = auditionPath == path
+        stopAudition()
+        guard !same, let a = try? AVAudioPlayer(contentsOf: URL(fileURLWithPath: path)), a.play() else { return }
+        audition = a
+        auditionPath = path
+        let length = a.duration
+        auditionEnd = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(length + 0.05))
+            guard !Task.isCancelled, let self, self.auditionPath == path else { return }
+            self.stopAudition()
+        }
+    }
+
     /// Plays a take on its own; the same take again stops it.
     func playTake(_ take: Take) {
         let same = auditioning == take.id
@@ -887,6 +910,7 @@ final class Store {
         audition?.stop()
         audition = nil
         if auditioning != nil { auditioning = nil }
+        if auditionPath != nil { auditionPath = nil }
     }
 
     // MARK: Export

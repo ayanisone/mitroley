@@ -646,6 +646,24 @@ struct RoomButton: View {
     }
 }
 
+/// Opens the Library or the Mixer: in the toolbar as an icon, in the menu as an item.
+struct WindowButton: View {
+    @Environment(\.openWindow) private var openWindow
+    let id: String
+    let title: String
+    let symbol: String
+    let key: KeyEquivalent
+    let help: String
+    var menu = false
+    var body: some View {
+        if menu {
+            Button("Show \(title)") { openWindow(id: id) }.keyboardShortcut(key, modifiers: [.command, .option])
+        } else {
+            Button { openWindow(id: id) } label: { Image(systemName: symbol) }.help(help)
+        }
+    }
+}
+
 /// Lets the store open the Room window (for the voice helper). Lives inside the main window, where the store is available.
 struct RoomOpener: View {
     @Environment(\.openWindow) private var openWindow

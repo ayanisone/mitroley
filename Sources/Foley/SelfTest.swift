@@ -27,6 +27,56 @@ enum SelfTest {
         let broken = SoundPreset.all.filter { p in let s = p.slots(); return s.count != p.chain.count || s.contains { $0.state == nil } }
         check("sound presets build", broken.isEmpty, broken.isEmpty ? "\(SoundPreset.all.count) presets" : "broken: " + broken.map(\.name).joined(separator: ", "))
 
+        // Room for the voice: a 1 kHz "voice" over noise "music" takes out the middle and leaves the rest.
+        do {
+            let rate = 48000.0, n = Int(rate * 4)
+            var seed: UInt64 = 7
+            func rnd() -> Float { seed = seed &* 6364136223846793005 &+ 1442695040888963407; return Float(Int64(bitPattern: seed >> 11) % 2000) / 2000 * 0.6 - 0.3 }
+            let music = (0..<n).map { _ in rnd() }
+            let voice = (0..<n).map { i -> Float in i > Int(rate) && i < Int(rate * 3) ? 0.25 * sin(2 * .pi * 1000 * Float(i) / Float(rate)) : 0 }
+            let made = EQDuck.process(music: [music], voice: voice, rate: rate, maxCut: 9).out[0]
+            // Level in a narrow band, measured directly at a spread of frequencies inside it.
+            func band(_ x: [Float], _ lo: Double, _ hi: Double, _ from: Double, _ to: Double) -> Double {
+                let a = Int(from * rate), b = Int(to * rate)
+                var power = 0.0
+                for step in 0..<12 {
+                    let hz = lo + (hi - lo) * (Double(step) + 0.5) / 12
+                    var re = 0.0, im = 0.0
+                    for i in a..<b {
+                        let ph = 2 * Double.pi * hz * Double(i) / rate
+                        re += Double(x[i]) * cos(ph); im += Double(x[i]) * sin(ph)
+                    }
+                    power += re * re + im * im
+                }
+                return 10 * log10(max(1e-12, power))
+            }
+            let mid = band(made, 960, 1040, 1.5, 2.5) - band(music, 960, 1040, 1.5, 2.5)
+            let high = band(made, 5000, 6000, 1.5, 2.5) - band(music, 5000, 6000, 1.5, 2.5)
+            let quiet = 20 * log10(max(1e-9, rms(made, 0.1, 0.7))) - 20 * log10(max(1e-9, rms(music, 0.1, 0.7)))
+            check("EQ ducking lowers only where the voice is", mid < -5 && abs(high) < 1 && abs(quiet) < 0.5,
+                  String(format: "at the voice %.1f dB, above it %.1f dB, before it speaks %.1f dB", mid, high, quiet))
+        }
+        // The library tells shapes and pitch apart.
+        do {
+            let rate = 48000.0
+            func item(_ x: [Float]) -> SoundItem { Library.measure(x, rate: rate, duration: Double(x.count) / rate, url: URL(fileURLWithPath: "/tmp/x.wav")) }
+            var seed: UInt64 = 3
+            func rnd() -> Float { seed = seed &* 6364136223846793005 &+ 1442695040888963407; return Float(Int64(bitPattern: seed >> 11) % 2000) / 1000 - 1 }
+            let n = Int(rate * 2)
+            let hit = item((0..<n).map { i in rnd() * exp(-Float(i) / Float(rate) * 9) })
+            let rise = item((0..<n).map { i in rnd() * powf(Float(i) / Float(n), 3) })
+            let steady = item((0..<n).map { _ in rnd() * 0.3 })
+            let pulse = item((0..<n).map { i in rnd() * (i % 12000 < 2400 ? 1 : 0.02) })
+            let tone = item((0..<n).map { i in 0.4 * sin(2 * .pi * 440 * Float(i) / Float(rate)) })
+            let click = item((0..<Int(rate * 0.05)).map { i in rnd() * exp(-Float(i) / 300) })
+            // A low thump with hiss on it must not be given a high note, and a pure low tone must not read as bright.
+            let thump = item((0..<n).map { i in (sin(2 * .pi * 55 * Float(i) / Float(rate)) + 0.3 * rnd()) * exp(-Float(i) / Float(rate) * 5) })
+            let low = item((0..<n).map { i in 0.4 * sin(2 * .pi * 110 * Float(i) / Float(rate)) })
+            let got = [hit.shape, rise.shape, steady.shape, pulse.shape, click.shape]
+            check("library tells shapes apart", got == [.hit, .rise, .steady, .pulsing, .click] && tone.note == "A4" && hit.note == nil && (thump.note == nil || thump.note!.hasSuffix("1")) && low.tone == .low && low.note == "A2" && steady.tone == .bright,
+                  "hit=\(hit.shape.rawValue) rise=\(rise.shape.rawValue) steady=\(steady.shape.rawValue) pulse=\(pulse.shape.rawValue) click=\(click.shape.rawValue) tone=\(tone.note ?? "none") noise=\(hit.note ?? "none") thump=\(thump.note ?? "none") low=\(low.note ?? "none")/\(low.tone.rawValue)")
+        }
+
         var p = Project()
         p.duration = 8
         let room = SpaceTemplate.named("Living Room")!.space

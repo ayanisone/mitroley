@@ -51,6 +51,8 @@ struct MainView: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 RoomButton()
+                WindowButton(id: "mixer", title: "Mixer", symbol: "slider.vertical.3", key: "m", help: "Mixer: every track's fader, pan, mute, solo and meter side by side (⌥⌘M)")
+                WindowButton(id: "library", title: "Library", symbol: "square.stack.3d.up", key: "l", help: "Library: your own sounds, found by shape, tone, length and pitch (⌥⌘L)")
                 Button { store.showClaude.toggle() } label: {
                     Label("Claude", systemImage: "sparkle")
                 }
@@ -85,6 +87,9 @@ struct MainView: View {
         .animation(Motion.ui(reduceMotion), value: store.toast)
         .animation(Motion.ui(reduceMotion), value: store.showClaude)
         .sheet(isPresented: $store.showExport) { ExportSheet().environment(store) }
+        .sheet(isPresented: $store.showDub) { DubSheet().environment(store) }
+        .overlay(alignment: .bottom) { CrashBar() }
+        .overlay { Splash() }
         .sheet(isPresented: $store.showSettings) { SettingsSheet().environment(store) }
         // Icons only, and no "Icon and Text" choice to fall into: it also overrides a mode saved by an earlier launch.
         .background(RoomOpener())

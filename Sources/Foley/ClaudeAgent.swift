@@ -89,6 +89,10 @@ final class AgentState: Identifiable {
     sections, one per scene or run of shots, each with styles that say how the music should feel there, so the \
     score turns where the picture turns. Instrumental unless the user asks for vocals. Put it on a dry music \
     track and set its level under the effects.
+    The library: the person keeps their own sounds, indexed. For interface sounds in explainers and app demos, and \
+    for abstract or designed sounds (whooshes, risers, hits, ticks), call search_library before generating, and \
+    place what fits with add_audio_clip. These do not depend on the place in the picture, so a sound that already \
+    exists is better than a new one. Generate what the library does not have.
     Scene boundaries are not walls. Sound designers let a tail ring past the cut: an ambience may run on half a \
     second or more into the next scene under a fade, and the decay of a hit, a pass-by or a door may finish after \
     the picture has moved on. Do not trim every clip to its shot; a little overlap is what makes it feel made by a \

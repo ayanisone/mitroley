@@ -107,6 +107,7 @@ struct FoleyApp: App {
                     Button("Split into Stems…") { Panels.originalSound(store, stems: true) }
                 }
                 .disabled(store.project.video == nil)
+                Button("Dub Into Other Languages…") { store.showDub = true }
                 Button("Export…") { store.showExport = true }.keyboardShortcut("e")
                 Button("Show Session in Finder") { NSWorkspace.shared.activateFileViewerSelecting([store.folder]) }
             }
@@ -119,6 +120,7 @@ struct FoleyApp: App {
                     .keyboardShortcut("j")
                 Divider()
                 Button("Send a Suggestion…") { Panels.suggest() }
+                Button("Report a Problem…") { ProblemReports.report(nil) }
                 Button("mitroley on GitHub") { NSWorkspace.shared.open(URL(string: "https://github.com/ayanisone/mitroley")!) }
             }
             CommandGroup(replacing: .appSettings) {
@@ -126,6 +128,8 @@ struct FoleyApp: App {
             }
             CommandMenu("Session") {
                 RoomButton(menu: true)
+                WindowButton(id: "mixer", title: "Mixer", symbol: "", key: "m", help: "", menu: true)
+                WindowButton(id: "library", title: "Library", symbol: "", key: "l", help: "", menu: true)
                 Button("Duplicate Clip") { store.duplicateClip() }.keyboardShortcut("d")
                 Button("Split Clip at Playhead") { store.splitClip() }.keyboardShortcut("t")
                 Button("Crossfade Clips") { store.crossfade() }.keyboardShortcut("f")
@@ -163,6 +167,22 @@ struct FoleyApp: App {
                 .preferredColorScheme(.dark)
         }
         .defaultSize(width: 1000, height: 680)
+
+        Window("Mixer", id: "mixer") {
+            MixerView()
+                .environment(store)
+                .preferredColorScheme(.dark)
+                .tint(Theme.accent)
+        }
+        .defaultSize(width: 900, height: 520)
+
+        Window("Library", id: "library") {
+            LibraryView()
+                .environment(store)
+                .preferredColorScheme(.dark)
+                .tint(Theme.accent)
+        }
+        .defaultSize(width: 760, height: 620)
     }
 }
 
@@ -308,6 +328,20 @@ enum Panels {
         guard panel.runModal() == .OK else { return }
         var t = store.player.time
         for url in panel.urls {
+            // A surround file can come in as one track per speaker, so each can be seen, heard and moved on its own.
+            let channels = SpeakerSplit.channels(of: url)
+            if channels > 2, SpeakerSplit.layout(channels: channels, adm: SpeakerSplit.isADM(url)) != nil {
+                let alert = NSAlert()
+                alert.messageText = "\(url.lastPathComponent) has \(channels) channels"
+                alert.informativeText = "Split it into one track per speaker, each named (L, R, C, LFE, Lss…) and placed where that speaker is? Or bring it in as one clip, folded down to stereo."
+                alert.addButton(withTitle: "One Track per Speaker")
+                alert.addButton(withTitle: "One Stereo Clip")
+                if alert.runModal() == .alertFirstButtonReturn {
+                    let at = t
+                    Task { await store.importSplit(url, at: at) }
+                    continue
+                }
+            }
             if let id = store.importAudio(url, track: track, at: t), let l = store.project.locate(clip: id) {
                 t += store.project.tracks[l.track].clips[l.clip].duration
                 store.selection = .clip(id)
