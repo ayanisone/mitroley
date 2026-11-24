@@ -376,6 +376,17 @@ struct ExportSheet: View {
     @State private var result: (url: URL, summary: String)?
     @State private var failure: String?
     @State private var destination = 0
+    /// The file name typed by hand, without its ending. Empty = the usual name for the chosen format.
+    @State private var name = ""
+
+    private var usualName: String { format.isFolder ? "\(store.project.name) \(format.suffix)" : "\(store.project.name).\(format.suffix)" }
+    private var ending: String { format.isFolder ? "folder" : "." + format.ext }
+    /// Where this export will be written, with the typed name if there is one.
+    private var target: URL {
+        let typed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = typed.isEmpty ? usualName : Places.tidy(typed)
+        return store.exportsFolder.appendingPathComponent(format.isFolder ? base : base + "." + format.ext)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -415,7 +426,22 @@ struct ExportSheet: View {
                     }
                 }
             }
-            .frame(maxHeight: max(180, (NSApp.mainWindow?.frame.height ?? 800) - 330))
+            .frame(maxHeight: max(160, (NSApp.mainWindow?.frame.height ?? 800) - 390))
+            HStack(spacing: 8) {
+                Image(systemName: "pencil").font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+                TextField(usualName, text: $name)
+                    .textFieldStyle(.plain).font(.system(size: 12.5))
+                    .padding(.horizontal, 9).frame(height: 28)
+                    .background(Theme.raised, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .disabled(working)
+                    .onChange(of: name) { _, _ in result = nil; failure = nil }
+                Text(ending).font(.system(size: 11.5).monospacedDigit()).foregroundStyle(Theme.secondary)
+            }
+            .help("The name the export is saved under. Leave it empty for the usual name.")
+            if result == nil, FileManager.default.fileExists(atPath: target.path) {
+                Text("A file with this name is already there and will be replaced.")
+                    .font(.system(size: 11.5)).foregroundStyle(Theme.secondary)
+            }
             HStack(spacing: 8) {
                 Image(systemName: "folder").font(.system(size: 11)).foregroundStyle(Theme.tertiary)
                 Text((store.exportsFolder.path as NSString).abbreviatingWithTildeInPath)
@@ -450,7 +476,8 @@ struct ExportSheet: View {
                         working = true
                         failure = nil
                         Task {
-                            do { result = try await store.export(format) } catch { failure = error.localizedDescription }
+                            let to = target
+                            do { result = try await store.export(format, to: to) } catch { failure = error.localizedDescription }
                             working = false
                         }
                     }
