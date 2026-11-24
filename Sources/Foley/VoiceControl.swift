@@ -132,7 +132,7 @@ extension VoiceAgent {
 
     private func visibleTimes(_ store: Store) -> (from: Double, to: Double, pps: Double)? {
         guard let sv = Commands.timelineScrollView(), let doc = sv.documentView else { return nil }
-        let duration = max(1, store.project.duration)
+        let duration = max(1, store.project.extent)
         let lanes = sv.contentView.bounds.width - Metrics.header - 1
         let pps = Double(doc.frame.width - Metrics.header - 1 - 24) / duration
         guard pps > 0, lanes > 0 else { return nil }
@@ -212,7 +212,7 @@ extension VoiceAgent {
         guard time != nil || track != nil || direction != nil else { throw ServiceError(message: "Say where to scroll: to_time, track or direction.") }
         x = min(maxX, max(0, x)); y = min(maxY, max(0, y))
         glide(sv, to: NSPoint(x: x, y: y))
-        return ["ok": true, "timeline_shows_seconds": [((x / v.pps) * 100).rounded() / 100, ((min(store.project.duration, (x + lanes) / v.pps)) * 100).rounded() / 100],
+        return ["ok": true, "timeline_shows_seconds": [((x / v.pps) * 100).rounded() / 100, ((min(store.project.extent, (x + lanes) / v.pps)) * 100).rounded() / 100],
                 "note": maxX < 1 && (time != nil || direction == "left" || direction == "right") ? "The whole film already fits in the view. Zoom in to scroll sideways." : ""]
     }
 

@@ -471,6 +471,8 @@ struct Project: Codable, Equatable {
     var name = "Untitled"
     var fps = 30.0
     var duration = 30.0
+    /// How far the timeline runs: the film, or the end of the last clip when sound carries on past the picture.
+    var extent: Double { max(duration, tracks.reduce(0) { m, t in max(m, t.clips.reduce(0) { max($0, $1.start + $1.duration) }) }) }
     var video: VideoRef?
     var videoVolume = 0.0           // 0…1, the video's own soundtrack
     var tracks: [Track] = []

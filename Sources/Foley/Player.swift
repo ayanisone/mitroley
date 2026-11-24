@@ -104,7 +104,7 @@ final class Player {
         onPlay?()
         loudness.reset()
         if let r = loopRange, time < r.lowerBound || time >= r.upperBound - 0.02 { time = r.lowerBound }
-        if time >= project.duration - 0.02 { time = 0 }
+        if time >= project.extent - 0.02 { time = 0 }
         startEngine()
         graph.apply(project, at: time, mode: monitor, snap: true)
         graph.seek(to: time, playing: true)
@@ -114,7 +114,7 @@ final class Player {
 
     func pause() {
         guard isPlaying else { return }
-        time = min(project.duration, graph.time)
+        time = min(project.extent, graph.time)
         graph.seek(to: time, playing: false)
         isPlaying = false
         video.pause()
@@ -122,7 +122,7 @@ final class Player {
     }
 
     func seek(_ t: Double) {
-        time = min(max(0, t), project.duration)
+        time = min(max(0, t), project.extent)
         graph.seek(to: time, playing: isPlaying)
         if isPlaying { startVideo(at: time) } else { seekVideo(time) }
         applyNow()
@@ -133,8 +133,8 @@ final class Player {
             let t = graph.time
             if let r = loopRange, t >= r.upperBound {
                 seek(r.lowerBound)
-            } else if t >= project.duration {
-                if loop { seek(0) } else { pause(); time = project.duration }
+            } else if t >= project.extent {
+                if loop { seek(0) } else { pause(); time = project.extent }
             } else {
                 time = t
             }
