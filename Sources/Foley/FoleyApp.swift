@@ -6,6 +6,10 @@ import UniformTypeIdentifiers
 enum Entry {
     static func main() {
         let args = CommandLine.arguments
+        if let i = args.firstIndex(of: "--windtest"), i + 2 < args.count {
+            WindPicture.Host.writeTest(URL(fileURLWithPath: args[i + 1]), to: URL(fileURLWithPath: args[i + 2]))
+            exit(0)
+        }
         if let i = args.firstIndex(of: "--selftest"), i + 1 < args.count {
             exit(SelfTest.run(args[i + 1]))
         }

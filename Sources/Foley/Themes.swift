@@ -68,10 +68,23 @@ enum Theme {
     static var danger: Color { current.danger }
 }
 
-/// Swatches to choose the look from.
+/// Swatches to choose the look from, and the picture that moves behind the film in that look.
 struct ThemePicker: View {
     @Environment(Store.self) private var store
+    @AppStorage("backdropStamp") private var stamp = 0
     var body: some View {
+        let has = Backdrop.picture(for: store.theme) != nil
+        HStack(spacing: 8) {
+            Button(has ? "Change This Theme's Picture…" : "Choose a Picture for This Theme…") {
+                let panel = NSOpenPanel()
+                panel.allowedContentTypes = [.image]
+                panel.message = "Choose a picture to move behind the film in the \(Theme.current.name) theme."
+                if panel.runModal() == .OK, let url = panel.url { Backdrop.set(url, for: store.theme) }
+            }
+            .buttonStyle(PillButtonStyle())
+            if has { Button("Remove Picture") { Backdrop.set(nil, for: store.theme) }.buttonStyle(PillButtonStyle()) }
+        }
+        .id(stamp)
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 8)], spacing: 8) {
             ForEach(Palette.all) { p in
                 let on = store.theme == p.id
@@ -100,83 +113,170 @@ struct ThemePicker: View {
     }
 }
 
-/// The backdrop behind the picture, done the way the QC Reel does it: the frame that is playing, reduced to an ordered
-/// dither in two of the theme's colours and pushed about as if by wind. With no film it is the same wind over a soft slope
-/// of light. It redraws about ten times a second and holds still when the Mac is set to reduce motion.
+/// The backdrop behind the picture: the theme's own picture, with wind blowing through it. The picture is bent by a slow,
+/// drifting field, the way cloth or water moves, never broken into dots. A theme without a picture is plain.
+/// Pictures live on this Mac only, in ~/Library/Application Support/mitroley/Backdrops, one per theme, named after it.
 struct Backdrop: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("movingBackdrop") private var moving = true
-    /// The film frame nearest the playhead, if there is a film.
-    var frame: NSImage?
-    @State private var grid = FrameGrid()
+    @AppStorage("backdropStamp") private var stamp = 0
 
-    /// How bright a film frame is, cell by cell. Worked out once per frame and grid size.
-    final class FrameGrid {
-        private var key = ""
-        private var lum: [Float] = []
-        func luminance(of image: NSImage, cols: Int, rows: Int) -> [Float] {
-            let k = "\(ObjectIdentifier(image).hashValue)-\(cols)x\(rows)"
-            if k == key { return lum }
-            key = k
-            lum = [Float](repeating: 0, count: cols * rows)
-            guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
-                  let ctx = CGContext(data: nil, width: cols, height: rows, bitsPerComponent: 8, bytesPerRow: cols, space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return lum }
-            // Fill the grid with the frame, cropping what does not fit, as a wallpaper would.
-            let s = max(CGFloat(cols) / CGFloat(cg.width), CGFloat(rows) / CGFloat(cg.height))
-            let w = CGFloat(cg.width) * s, h = CGFloat(cg.height) * s
-            ctx.interpolationQuality = .medium
-            ctx.draw(cg, in: CGRect(x: (CGFloat(cols) - w) / 2, y: (CGFloat(rows) - h) / 2, width: w, height: h))
-            guard let data = ctx.data else { return lum }
-            let bytes = data.bindMemory(to: UInt8.self, capacity: cols * rows)
-            for i in 0..<(cols * rows) { lum[i] = powf(Float(bytes[i]) / 255, 1.6) * 0.62 }
-            return lum
-        }
+    static var folder: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("mitroley/Backdrops", isDirectory: true)
     }
-
-    private static let bayer: [[Double]] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]].map { $0.map { ($0 + 0.5) / 16 } }
-
-    @inline(__always) private static func wind(_ x: Double, _ y: Double, _ t: Double) -> Double {
-        (sin(x * 0.9 + t * 0.5) * cos(y * 0.7 - t * 0.35) + sin((x + y) * 0.33 + t * 0.22) * 0.8 + sin(x * 0.2 - y * 0.3 + t * 0.13) * 0.6) / 2.4
+    /// The picture for a theme, if one has been put there.
+    static func picture(for theme: String) -> URL? {
+        ["jpg", "jpeg", "png", "webp", "heic", "tiff"].map { folder.appendingPathComponent(theme + "." + $0) }.first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+    /// Copies a picture in as this theme's backdrop, replacing the one it had. nil removes it.
+    static func set(_ file: URL?, for theme: String) {
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        while let old = picture(for: theme) { try? FileManager.default.removeItem(at: old) }
+        if let file { try? FileManager.default.copyItem(at: file, to: folder.appendingPathComponent(theme + "." + file.pathExtension.lowercased())) }
+        UserDefaults.standard.set(UserDefaults.standard.integer(forKey: "backdropStamp") + 1, forKey: "backdropStamp")
     }
 
     var body: some View {
-        let tint = Theme.current.glow[2], bright = Theme.current.glow[1]
-        SwiftUI.TimelineView(.animation(minimumInterval: 0.1, paused: reduceMotion || !moving)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 10_000) * 0.5
-            Canvas(rendersAsynchronously: true) { ctx, size in
-                let cell: CGFloat = size.width > 1500 ? 13 : 11
-                let cols = Int(ceil(size.width / cell)), rows = Int(ceil(size.height / cell))
-                guard cols > 1, rows > 1 else { return }
-                let lum = frame.map { grid.luminance(of: $0, cols: cols, rows: rows) }
-                var low = Path(), high = Path()
-                for y in 0..<rows {
-                    for x in 0..<cols {
-                        let n = Self.wind(Double(x) / 7, Double(y) / 7, t)
-                        var v: Double
-                        if let lum {
-                            // The frame, read from a little upwind of each cell, so it leans and ripples.
-                            let sx = min(cols - 1, max(0, Int((Double(x) + n * 2.6).rounded())))
-                            let sy = min(rows - 1, max(0, Int((Double(y) + Self.wind(Double(y) / 7 + 3, Double(x) / 7, t) * 1.6).rounded())))
-                            v = Double(lum[sy * cols + sx]) + n * 0.07
-                        } else {
-                            v = max(0, (n + 1) / 2 * 0.6 + Double(x) / Double(cols) * 0.22 - Double(y) / Double(rows) * 0.2 - 0.32) * 0.9
-                        }
-                        guard v > 0.02, v >= Self.bayer[y & 3][x & 3] else { continue }
-                        let r = max(0.6, min(cell * 0.42, cell * 0.22 + CGFloat(v) * cell * 0.22))
-                        let dot = Path(ellipseIn: CGRect(x: CGFloat(x) * cell + cell / 2 - r, y: CGFloat(y) * cell + cell / 2 - r, width: r * 2, height: r * 2))
-                        if v > 0.82 { high.addPath(dot) } else { low.addPath(dot) }
-                    }
-                }
-                ctx.fill(low, with: .color(tint.opacity(0.5)))
-                ctx.fill(high, with: .color(bright.opacity(0.6)))
+        let theme = Theme.current
+        ZStack {
+            Theme.bg
+            if let url = Self.picture(for: theme.id) {
+                WindPicture(url: url, moving: moving && !reduceMotion)
+                    .id("\(url.path)-\(stamp)")
+                // Held back, and darker towards the edges, so the film and the controls stay the brightest things there.
+                Theme.bg.opacity(0.38)
+                RadialGradient(colors: [.clear, Theme.bg.opacity(0.35), Theme.bg.opacity(0.85)], center: .center, startRadius: 160, endRadius: 820)
             }
         }
-        .background(Theme.bg)
-        // Darker towards the edges, so the picture and the controls stay the brightest things there.
-        .overlay(RadialGradient(colors: [.clear, Theme.bg.opacity(0.55), Theme.bg.opacity(0.92)], center: .center, startRadius: 120, endRadius: 760))
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
+}
+
+/// A picture that fills its view and is bent by a drifting field, so it moves like something light in a wind.
+struct WindPicture: NSViewRepresentable {
+    let url: URL
+    let moving: Bool
+
+    final class Host: NSView {
+        private let context = CIContext(options: [.cacheIntermediates: false])
+        private var source: CIImage?
+        private var fitted: CIImage?
+        private var fittedSize = CGSize.zero
+        private var timer: Timer?
+        private let field = Host.makeField()
+        var moving = true { didSet { if moving != oldValue { schedule() } } }
+
+        override init(frame: NSRect) {
+            super.init(frame: frame)
+            wantsLayer = true
+            layer = CALayer()
+            layer?.contentsGravity = .resize
+            layer?.masksToBounds = true
+        }
+        required init?(coder: NSCoder) { fatalError() }
+
+        func load(_ url: URL) {
+            source = CIImage(contentsOf: url, options: [.applyOrientationProperty: true])
+            fitted = nil
+            draw()
+        }
+
+        /// A small tile of smooth, repeating noise: red bends the picture sideways, green up and down. Mid grey is no bend.
+        static func makeField() -> CIImage {
+            let n = 96
+            var px = [UInt8](repeating: 255, count: n * n * 4)
+            func wave(_ x: Double, _ y: Double, _ terms: [(Double, Double, Double, Double)]) -> Double {
+                var v = 0.0, total = 0.0
+                for (fx, fy, amp, phase) in terms { v += amp * sin(2 * .pi * (fx * x + fy * y) + phase); total += amp }
+                return 0.5 + 0.5 * v / total
+            }
+            for y in 0..<n {
+                for x in 0..<n {
+                    let u = Double(x) / Double(n), w = Double(y) / Double(n)
+                    let r = wave(u, w, [(1, 0, 1, 0.3), (1, 1, 0.7, 1.9), (2, -1, 0.45, 4.1), (3, 2, 0.25, 2.2)])
+                    let g = wave(u, w, [(0, 1, 1, 1.1), (1, -1, 0.7, 0.4), (-1, 2, 0.45, 3.3), (2, 3, 0.25, 5.0)])
+                    let i = (y * n + x) * 4
+                    px[i] = UInt8(r * 255); px[i + 1] = UInt8(g * 255); px[i + 2] = 128
+                }
+            }
+            let image = CIImage(bitmapData: Data(px), bytesPerRow: n * 4, size: CGSize(width: n, height: n), format: .RGBA8, colorSpace: nil)
+            return image.applyingFilter("CIAffineTile", parameters: [:])
+        }
+
+        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); schedule() }
+        override func layout() { super.layout(); draw() }
+
+        private func schedule() {
+            timer?.invalidate()
+            timer = nil
+            guard window != nil, moving else { draw(); return }
+            let t = Timer(timeInterval: 1.0 / 24, repeats: true) { [weak self] _ in self?.draw() }
+            RunLoop.main.add(t, forMode: .common)
+            timer = t
+        }
+        deinit { timer?.invalidate() }
+
+        private func draw() {
+            guard let source, bounds.width > 4, bounds.height > 4, window?.occlusionState.contains(.visible) != false else { return }
+            // Drawn at one pixel per point: soft enough for a backdrop, and a quarter of the work on a Retina screen.
+            let size = CGSize(width: bounds.width.rounded(), height: bounds.height.rounded())
+            if fitted == nil || fittedSize != size {
+                fitted = Host.fit(source, to: size)
+                fittedSize = size
+            }
+            guard let fitted else { return }
+            let out = moving ? Host.blow(fitted, field: field, at: CACurrentMediaTime()) : fitted
+            guard let cg = context.createCGImage(out, from: CGRect(origin: .zero, size: size)) else { return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            layer?.contents = cg
+            CATransaction.commit()
+        }
+
+        /// The picture scaled to cover `size`, a little over, so bent edges never show.
+        static func fit(_ source: CIImage, to size: CGSize) -> CIImage {
+            let e = source.extent
+            let s = max(size.width / e.width, size.height / e.height) * 1.08
+            return source.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY))
+                .transformed(by: CGAffineTransform(scaleX: s, y: s))
+                .transformed(by: CGAffineTransform(translationX: (size.width - e.width * s) / 2, y: (size.height - e.height * s) / 2))
+        }
+
+        /// The picture as the wind has it at time `t`.
+        static func blow(_ fitted: CIImage, field: CIImage, at t: Double) -> CIImage {
+            // Two layers of the field, a broad slow one and a finer quick one, both travelling downwind.
+            func layer(_ scale: CGFloat, _ dx: CGFloat, _ dy: CGFloat) -> CIImage {
+                field.transformed(by: CGAffineTransform(scaleX: scale, y: scale)).transformed(by: CGAffineTransform(translationX: CGFloat(t) * dx, y: CGFloat(t) * dy))
+            }
+            let broad = layer(5.5, 60, 9), fine = layer(2.2, 130, -16)
+            let bend = fine.applyingFilter("CIDissolveTransition", parameters: [kCIInputTargetImageKey: broad, kCIInputTimeKey: 0.55])
+            // Gusts: the wind rises and falls rather than blowing evenly.
+            let gust = 78 + 30 * sin(t * 0.37) + 14 * sin(t * 0.91 + 1.3)
+            return fitted.clampedToExtent().applyingFilter("CIDisplacementDistortion", parameters: ["inputDisplacementImage": bend, kCIInputScaleKey: gust])
+        }
+
+        /// Writes the backdrop as it would be drawn at two moments, to look at without a screen.
+        static func writeTest(_ url: URL, to dir: URL) {
+            guard let source = CIImage(contentsOf: url, options: [.applyOrientationProperty: true]) else { print("could not read \(url.path)"); return }
+            let size = CGSize(width: 1100, height: 420), ctx = CIContext(), field = makeField()
+            let fitted = fit(source, to: size)
+            for (name, image) in [("still", fitted), ("wind-a", blow(fitted, field: field, at: 3)), ("wind-b", blow(fitted, field: field, at: 4.5))] {
+                guard let cg = ctx.createCGImage(image, from: CGRect(origin: .zero, size: size)) else { print("render failed: \(name)"); continue }
+                let rep = NSBitmapImageRep(cgImage: cg)
+                try? rep.representation(using: .png, properties: [:])?.write(to: dir.appendingPathComponent(name + ".png"))
+            }
+            print("written")
+        }
+    }
+
+    func makeNSView(context: Context) -> Host {
+        let v = Host()
+        v.moving = moving
+        v.load(url)
+        return v
+    }
+    func updateNSView(_ v: Host, context: Context) { v.moving = moving }
 }
 
 // MARK: - Hints

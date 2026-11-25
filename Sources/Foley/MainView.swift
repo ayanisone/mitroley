@@ -193,18 +193,12 @@ struct VideoPane: View {
     @State private var hovering = false
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
-    /// The film thumbnail nearest the playhead: the backdrop is a dithered reflection of it.
-    private var backdropFrame: NSImage? {
-        let strip = store.filmstrip
-        guard !strip.isEmpty, store.project.duration > 0 else { return nil }
-        return strip[min(strip.count - 1, max(0, Int(store.player.time / store.project.duration * Double(strip.count))))]
-    }
     /// The one gap around the picture: above it, between it and the transport, and under the transport.
     static let gap: CGFloat = 12
 
     var body: some View {
         ZStack {
-            Backdrop(frame: backdropFrame)
+            Backdrop()
             if store.project.video != nil, store.pictureOut {
                 VStack(spacing: 10) {
                     Image(systemName: "macwindow.on.rectangle").font(.system(size: 26, weight: .light)).foregroundStyle(Theme.tertiary)
