@@ -1,3 +1,4 @@
+import IOKit.ps
 import MetalKit
 import SwiftUI
 
@@ -31,6 +32,41 @@ enum FlagLayout {
     nonisolated(unsafe) static var bottom: CGFloat = 0
 }
 
+/// How much the backdrop moves, so a Mac with less to spare is not asked for more than it has.
+enum MotionLevel: String, CaseIterable, Identifiable {
+    case auto, smooth, light, still
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .auto: "Automatic"
+        case .smooth: "Smooth"
+        case .light: "Light"
+        case .still: "Still"
+        }
+    }
+    var about: String {
+        switch self {
+        case .auto: "Smooth on power with room to spare. Light on battery, on a warm Mac, or on a Mac with four cores or 8 GB or less."
+        case .smooth: "60 frames a second, whether or not mitroley is in front."
+        case .light: "30 frames a second, the pointer does not stir it, and it rests when another app is in front."
+        case .still: "The picture hangs still. Nothing is redrawn."
+        }
+    }
+    static var chosen: MotionLevel { MotionLevel(rawValue: UserDefaults.standard.string(forKey: "motionLevel") ?? "") ?? .auto }
+
+    /// What Automatic comes to on this Mac, right now.
+    static var automatic: MotionLevel {
+        let info = ProcessInfo.processInfo
+        if info.activeProcessorCount <= 4 || info.physicalMemory <= 8 * 1_073_741_824 { return .light }
+        if info.thermalState != .nominal { return .light }
+        let source = IOPSGetProvidingPowerSourceType(nil)?.takeUnretainedValue() as String?
+        if source == kIOPMBatteryPowerKey { return .light }
+        return .smooth
+    }
+    /// The level in force: the one chosen, or what Automatic works out.
+    static var current: MotionLevel { let c = chosen; return c == .auto ? automatic : c }
+}
+
 struct FlagView: NSViewRepresentable {
     /// The theme and a counter that changes when its picture is replaced.
     let theme: Palette
@@ -55,7 +91,9 @@ struct FlagView: NSViewRepresentable {
 
     func updateNSView(_ view: MTKView, context: Context) {
         context.coordinator.set(theme: theme, stamp: stamp, wind: wind, in: view)
-        if view.preferredFramesPerSecond != 60 { view.preferredFramesPerSecond = 60 }
+        context.coordinator.level = MotionLevel.current
+        let rate = context.coordinator.level == .light ? 30 : 60
+        if view.preferredFramesPerSecond != rate { view.preferredFramesPerSecond = rate }
     }
 
     final class Renderer: NSObject, MTKViewDelegate {
@@ -76,6 +114,9 @@ struct FlagView: NSViewRepresentable {
         private var mixStart = CACurrentMediaTime() - 10
         private let t0 = CACurrentMediaTime()
         private weak var view: MTKView?
+        /// Smooth or light; looked at again every couple of seconds, since power and heat change under Automatic.
+        var level = MotionLevel.smooth
+        private var frames = 0
         // The pointer as the cloth feels it: where it is, a point that trails behind it, and how hard it is moving.
         private var mouse = SIMD2<Float>(-9, -9), wake = SIMD2<Float>(-9, -9)
         private var push: Float = 0
@@ -86,7 +127,7 @@ struct FlagView: NSViewRepresentable {
             let dt = Float(min(0.1, max(0.001, now - lastDraw)))
             lastDraw = now
             var speed: Float = 0
-            if UserDefaults.standard.object(forKey: "backdropPointer") as? Bool ?? true, let window = view.window, view.bounds.width > 1 {
+            if level != .light, UserDefaults.standard.object(forKey: "backdropPointer") as? Bool ?? true, let window = view.window, view.bounds.width > 1 {
                 let p = view.convert(window.mouseLocationOutsideOfEventStream, from: nil)
                 if view.bounds.contains(p) {
                     let at = SIMD2(Float(p.x / view.bounds.width), Float(p.y / view.bounds.height))
@@ -117,7 +158,7 @@ struct FlagView: NSViewRepresentable {
             slots[1].texture = ink(device)
             // Rest whenever nobody is looking, and start again when they are.
             let nc = NotificationCenter.default
-            for name in [NSApplication.didBecomeActiveNotification, NSWindow.didChangeOcclusionStateNotification, NSWindow.didBecomeKeyNotification,
+            for name in [NSApplication.didBecomeActiveNotification, NSWindow.didChangeOcclusionStateNotification, NSWindow.didBecomeKeyNotification, UserDefaults.didChangeNotification,
                          Notification.Name.NSProcessInfoPowerStateDidChange, ProcessInfo.thermalStateDidChangeNotification] {
                 observers.append(nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.view?.isPaused = false })
             }
@@ -129,6 +170,7 @@ struct FlagView: NSViewRepresentable {
         /// power and is not running hot.
         private var allowed: Bool {
             let info = ProcessInfo.processInfo
+            if level == .light && !NSApp.isActive { return false }
             return view?.window?.occlusionState.contains(.visible) != false && !info.isLowPowerModeEnabled
                 && info.thermalState != .serious && info.thermalState != .critical
         }
@@ -193,6 +235,12 @@ struct FlagView: NSViewRepresentable {
             guard let pipeline, let queue, let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
                   let buffer = queue.makeCommandBuffer(), let enc = buffer.makeRenderCommandEncoder(descriptor: pass) else { return }
             let now = CACurrentMediaTime()
+            frames += 1
+            if frames % 120 == 0 {
+                level = MotionLevel.current
+                let rate = level == .light ? 30 : 60
+                if view.preferredFramesPerSecond != rate { view.preferredFramesPerSecond = rate }
+            }
             feel(view, now: now)
             let mix = Float(min(1, (now - mixStart) / 1.1))
             func cover(_ s: Slot) -> SIMD2<Float> {
@@ -298,11 +346,11 @@ struct FlagView: NSViewRepresentable {
 /// The flag, with the theme, the wind switch and the Mac's reduce-motion setting read for it.
 struct Backdrop: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @AppStorage("movingBackdrop") private var moving = true
+    @AppStorage("motionLevel") private var level = MotionLevel.auto.rawValue
     @AppStorage("backdropStamp") private var stamp = 0
     @Environment(Store.self) private var store
     var body: some View {
-        FlagView(theme: Theme.current, stamp: stamp, wind: moving && !reduceMotion, playing: store.player.isPlaying)
+        FlagView(theme: Theme.current, stamp: stamp, wind: MotionLevel.current != .still && !reduceMotion, playing: store.player.isPlaying)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
     }

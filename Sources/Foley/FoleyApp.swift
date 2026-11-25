@@ -138,6 +138,11 @@ struct FoleyApp: App {
                         Toggle(p.name, isOn: Binding(get: { store.theme == p.id }, set: { if $0 { store.theme = p.id } }))
                     }
                 }
+                Menu("Motion") {
+                    ForEach(MotionLevel.allCases) { m in
+                        Toggle(m.title, isOn: Binding(get: { MotionLevel.chosen == m }, set: { if $0 { UserDefaults.standard.set(m.rawValue, forKey: "motionLevel") } }))
+                    }
+                }
                 Toggle("Hint Box", isOn: Binding(get: { UserDefaults.standard.object(forKey: "hintBox") as? Bool ?? true }, set: { UserDefaults.standard.set($0, forKey: "hintBox") }))
                 Button("Check the Mix at the Cuts…") { store.showCutCheck = true }.keyboardShortcut("k", modifiers: [.command, .option])
                 Divider()

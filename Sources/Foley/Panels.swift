@@ -394,7 +394,7 @@ struct SettingsSheet: View {
     @AppStorage("autosaveSeconds") private var autosave = 0.0
     @AppStorage("hoverHelp") private var hoverHelp = true
     @AppStorage("startupSound") private var startupSound = true
-    @AppStorage("movingBackdrop") private var movingBackdrop = true
+    @AppStorage("motionLevel") private var motionLevel = MotionLevel.auto.rawValue
     @AppStorage("hintBox") private var hintBox = true
     @AppStorage("backdropPointer") private var backdropPointer = true
     @AppStorage("voiceAgentVoice") private var helperVoice = ""
@@ -485,8 +485,10 @@ struct SettingsSheet: View {
                 .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
             Text("Theme").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.secondary)
             ThemePicker()
-            Toggle("Wind in the picture behind the window", isOn: $movingBackdrop)
-                .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
+            Picker("Motion", selection: $motionLevel) {
+                ForEach(MotionLevel.allCases) { m in Text(m.title).tag(m.rawValue) }
+            }
+            Caption((MotionLevel(rawValue: motionLevel) ?? .auto).about + (motionLevel == "auto" ? " Right now: \(MotionLevel.automatic.title.lowercased())." : ""))
             Toggle("The picture reacts to the pointer (experimental)", isOn: $backdropPointer)
                 .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
             Toggle("Hint box in the corner: says what the pointer is on", isOn: $hintBox)
