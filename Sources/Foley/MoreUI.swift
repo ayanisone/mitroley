@@ -349,7 +349,7 @@ struct ScoreSection: View {
                     let old = duck.depth
                     store.live { p in
                         guard let i = p.trackIndex(track.id) else { return }
-                        p.tracks[i].duck = Duck(depth: v)
+                        p.tracks[i].duck?.depth = v
                         let key = AutoParam.volume.rawValue
                         p.tracks[i].automation[key] = p.tracks[i].automation[key]?.map { k in
                             var k = k

@@ -7,13 +7,19 @@ struct MainView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var timelineHeight: CGFloat = 380
     @State private var dragStart: CGFloat?
+    @AppStorage("dockHeight") private var dockHeight = 290.0
+    @State private var dockStart: CGFloat?
 
     var body: some View {
         @Bindable var store = store
         HStack(spacing: 0) {
             GeometryReader { geo in
-                let maxTimeline = max(200, geo.size.height - 220)
-                let tl = min(maxTimeline, max(180, timelineHeight))
+                // The dock under the timeline takes its height first; the picture always keeps at least 160 pt.
+                // With the dock open the timeline may go down to 150 pt, so the picture keeps 230.
+                let least: CGFloat = store.dock == nil ? 180 : 150
+                let dock = store.dock == nil ? 0 : min(max(240, CGFloat(dockHeight)), max(240, geo.size.height - 230 - least))
+                let maxTimeline = max(least, geo.size.height - (dock > 0 ? 230 : 220) - dock)
+                let tl = min(maxTimeline, max(least, timelineHeight))
                 VStack(spacing: 0) {
                     VideoPane()
                     // One handle resizes picture against timeline, tracking the pointer exactly.
@@ -30,6 +36,21 @@ struct MainView: View {
                                 .onEnded { _ in dragStart = nil }))
                     TimelineView()
                         .frame(height: tl)
+                    if dock > 0 {
+                        Rectangle()
+                            .fill(Theme.line)
+                            .frame(height: 1)
+                            .overlay(Rectangle().fill(Color.clear).frame(height: 9).contentShape(Rectangle())
+                                .onHover { $0 ? NSCursor.resizeUpDown.push() : NSCursor.pop() }
+                                .gesture(DragGesture(minimumDistance: 0)
+                                    .onChanged { g in
+                                        if dockStart == nil { dockStart = dock }
+                                        dockHeight = Double(min(max(240, geo.size.height - 380), max(240, (dockStart ?? dock) - g.translation.height)))
+                                    }
+                                    .onEnded { _ in dockStart = nil }))
+                        DockPanel()
+                            .frame(height: dock)
+                    }
                 }
             }
             Group {
@@ -51,8 +72,10 @@ struct MainView: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 RoomButton()
-                WindowButton(id: "mixer", title: "Mixer", symbol: "slider.vertical.3", key: "m", help: "Mixer: every track's fader, pan, mute, solo and meter side by side (⌥⌘M)")
-                WindowButton(id: "library", title: "Library", symbol: "square.stack.3d.up", key: "l", help: "Library: your own sounds, found by shape, tone, length and pitch (⌥⌘L)")
+                Button { store.toggleDock("mixer") } label: { Image(systemName: "slider.vertical.3") }
+                    .help("Mixer under the timeline: faders, buses, routing and sidechain (⌥⌘M)")
+                Button { store.toggleDock("library") } label: { Image(systemName: "square.stack.3d.up") }
+                    .help("Library under the timeline: your own sounds, ready to drag onto a track (⌥⌘L)")
                 Button { store.showClaude.toggle() } label: {
                     Label("Claude", systemImage: "sparkle")
                 }
@@ -88,6 +111,7 @@ struct MainView: View {
         .animation(Motion.ui(reduceMotion), value: store.showClaude)
         .sheet(isPresented: $store.showExport) { ExportSheet().environment(store) }
         .sheet(isPresented: $store.showDub) { DubSheet().environment(store) }
+        .sheet(isPresented: $store.showCutCheck) { CutCheckSheet().environment(store) }
         .overlay(alignment: .bottom) { CrashBar() }
         .overlay { Splash() }
         .sheet(isPresented: $store.showSettings) { SettingsSheet().environment(store) }
@@ -371,3 +395,34 @@ struct Timecode: View {
     }
 }
 
+
+
+/// The mixer or the library, docked under the timeline. Either can be moved out into a window of its own.
+struct DockPanel: View {
+    @Environment(Store.self) private var store
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        let which = store.dock ?? "mixer"
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                SegmentedPill(options: [(value: "mixer", label: "Mixer"), (value: "library", label: "Library")], selection: which, segmentWidth: 70, height: 24, size: 11.5) { store.dock = $0 }
+                Spacer()
+                Button { openWindow(id: which); store.dock = nil } label: {
+                    Image(systemName: "macwindow.on.rectangle").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.secondary).frame(width: 26, height: 24).contentShape(Rectangle())
+                }
+                .buttonStyle(PressStyle(scale: 0.9))
+                .help("Move this into a window of its own")
+                Button { store.dock = nil } label: {
+                    Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.secondary).frame(width: 26, height: 24).contentShape(Rectangle())
+                }
+                .buttonStyle(PressStyle(scale: 0.9))
+                .help("Close")
+            }
+            .padding(.horizontal, 10).frame(height: 34)
+            Rectangle().fill(Theme.line).frame(height: 1)
+            if which == "library" { LibraryView(docked: true) } else { MixerView(docked: true) }
+        }
+        .background(Theme.panel)
+    }
+}

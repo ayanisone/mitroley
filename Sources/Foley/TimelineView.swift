@@ -19,7 +19,7 @@ struct TimelineView: View {
             // the side panel is being resized it keeps its scale, and is fitted once when the resizing stops.
             let fit = fitWidth > 0 ? fitWidth : visible
             let pps = Double(fit - 24) / duration * store.zoom
-            let contentWidth = CGFloat(store.project.extent * pps) + 24
+            let contentWidth = CGFloat(store.project.reach * pps) + 24
             let pinned = Metrics.ruler + Metrics.film + Metrics.scene
             let rows = store.project.rows.count + store.project.tracks.reduce(0) { $0 + ($1.lane == nil ? 0 : 1) }
             ZStack(alignment: .topLeading) {
@@ -126,10 +126,10 @@ struct GridLayer: View {
     var body: some View {
         if store.showTimeGrid {
             // Drawn for the part of the timeline near the screen, a page at a time, so scrolling does not redraw it.
-            let total = CGFloat(store.project.extent * pps) + 24
+            let total = CGFloat(store.project.reach * pps) + 24
             let w = scroll.window(start: 0, width: total) ?? (0, min(total, scroll.width))
             let x0 = Double(w.lo)
-            let duration = store.project.extent
+            let duration = store.project.reach
             let unit = store.gridStep
             Canvas { ctx, size in
                 var step = unit
@@ -474,7 +474,7 @@ struct RulerView: View {
     private final class RulerPointer { var x: CGFloat = 0 }
 
     var body: some View {
-        SlicedCanvas(start: 0, width: CGFloat(store.project.extent * pps) + 24) { ctx, size, near in
+        SlicedCanvas(start: 0, width: CGFloat(store.project.reach * pps) + 24) { ctx, size, near in
             let steps: [Double] = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300]
             let step = steps.first { $0 * pps >= 64 } ?? 600
             if let r = store.project.loopRange {
@@ -485,7 +485,7 @@ struct RulerView: View {
                 ctx.fill(Path(CGRect(x: band.minX, y: 0, width: band.width, height: 2)), with: .color(Theme.accent.opacity(on ? 1 : 0.4)))
             }
             var t = max(0, (Double(near.lowerBound) / pps / step).rounded(.down) - 1) * step
-            while t <= store.project.extent + 0.001 {
+            while t <= store.project.reach + 0.001 {
                 let x = t * pps
                 if x > Double(near.upperBound) { break }
                 ctx.fill(Path(CGRect(x: x, y: size.height - 7, width: 1, height: 7)), with: .color(.white.opacity(0.25)))
@@ -532,11 +532,11 @@ struct RulerView: View {
                 case .edge(let fixed):
                     var lo = min(fixed, t), hi = max(fixed, t)
                     if hi - lo < 0.05 { if t >= fixed { hi = lo + 0.05 } else { lo = hi - 0.05 } }
-                    let duration = store.project.duration
+                    let duration = store.project.reach
                     lo = max(0, lo); hi = min(duration, hi)
                     store.live { $0.loopStart = lo; $0.loopEnd = hi }
                 case .move(let offset, let length):
-                    let lo = min(max(0, t - offset), max(0, store.project.duration - length))
+                    let lo = min(max(0, t - offset), max(0, store.project.reach - length))
                     store.live { $0.loopStart = lo; $0.loopEnd = lo + length }
                 case .scrub:
                     store.player.seek(t)
@@ -565,7 +565,7 @@ struct RulerView: View {
         }
     }
 
-    private func time(_ x: CGFloat) -> Double { min(store.project.extent, max(0, Double(x) / pps)) }
+    private func time(_ x: CGFloat) -> Double { min(store.project.reach, max(0, Double(x) / pps)) }
 
     /// The loop edge within 6 px of `x`, as the edge that stays put while dragging.
     private func edge(near x: CGFloat) -> Double? {
@@ -612,7 +612,7 @@ struct RulerView: View {
     }
 
     private func setLoop(_ a: Double, _ b: Double) {
-        let duration = store.project.duration
+        let duration = store.project.reach
         let lo = min(a, max(0, duration - 0.05))
         store.setLoop(lo, max(b, lo + 0.05))
         store.player.loop = true
@@ -797,7 +797,7 @@ struct TrackLane: View {
                 .gesture(DragGesture(minimumDistance: 0)
                     .onChanged { g in
                         guard store.tool == .marquee else { return }
-                        let limit = store.project.duration
+                        let limit = store.project.reach
                         store.marquee = Marquee(track: track.id, start: min(limit, max(0, Double(g.startLocation.x) / pps)),
                                                 end: min(limit, max(0, Double(g.location.x) / pps)))
                     }
@@ -814,7 +814,7 @@ struct TrackLane: View {
                         }
                     })
             // Scene boundaries carried down as guides.
-            SlicedCanvas(start: 0, width: CGFloat(store.project.extent * pps) + 24) { ctx, size, _ in
+            SlicedCanvas(start: 0, width: CGFloat(store.project.reach * pps) + 24) { ctx, size, _ in
                 if store.showSceneGrid {
                     for s in store.project.scenes where s.start > 0.01 {
                         ctx.fill(Path(CGRect(x: s.start * pps, y: 0, width: 1, height: size.height)), with: .color(.white.opacity(0.1)))
@@ -1140,7 +1140,7 @@ struct ClipView: View {
                 guard let o = origin else { return }
                 if store.tool == .marquee {
                     // Over a clip the marquee still selects time on the track.
-                    let limit = store.project.duration
+                    let limit = store.project.reach
                     store.marquee = Marquee(track: track.id, start: min(limit, max(0, Double(g.startLocation.x) / pps)),
                                             end: min(limit, max(0, Double(g.location.x) / pps)))
                     return
@@ -1449,7 +1449,7 @@ struct AutomationLane: View {
                         p.tracks[i].automation[param.rawValue] = list.sorted { $0.time < $1.time }
                     }
                 })
-            SlicedCanvas(start: 0, width: CGFloat(store.project.extent * pps) + 24) { ctx, size, near in
+            SlicedCanvas(start: 0, width: CGFloat(store.project.reach * pps) + 24) { ctx, size, near in
                 var path = Path()
                 if keys.isEmpty {
                     path.move(to: CGPoint(x: 0, y: y(resting)))

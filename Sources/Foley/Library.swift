@@ -62,6 +62,23 @@ final class Library {
     var scanning = false
     var progress = ""
     var folders: [URL] = []
+    /// The sound the browser has selected, by path.
+    var picked: String?
+    /// What the browser is showing, in order, for stepping through with the arrow keys.
+    @ObservationIgnored var shown: [SoundItem] = []
+    /// The keys go to the browser while it is open and the pointer was last pressed inside it.
+    @ObservationIgnored var hovered = false
+    @ObservationIgnored var active = false
+
+    /// Steps the selection up or down the list. Returns the sound it landed on.
+    func step(_ by: Int) -> SoundItem? {
+        guard !shown.isEmpty else { return nil }
+        let at = shown.firstIndex { $0.id == picked }
+        let next = min(shown.count - 1, max(0, (at ?? (by > 0 ? -1 : shown.count)) + by))
+        picked = shown[next].id
+        return shown[next]
+    }
+    var pickedItem: SoundItem? { shown.first { $0.id == picked } }
 
     nonisolated static let kinds: Set<String> = ["wav", "wave", "aif", "aiff", "mp3", "m4a", "caf", "flac", "aac"]
 
@@ -341,98 +358,145 @@ struct LibraryView: View {
     @State private var length = 0          // 0 any, 1 under half a second, 2 up to three seconds, 3 longer
     @State private var folder: String?
     @State private var like: SoundItem?
-    @State private var picked: String?
+    @AppStorage("libraryAutoplay") private var autoplay = true
+    /// Inside the main window, under the timeline.
+    var docked = false
 
     private var lengths: (Double, Double) { length == 1 ? (0, 0.5) : length == 2 ? (0.5, 3) : length == 3 ? (3, .infinity) : (0, .infinity) }
 
     var body: some View {
         let library = store.library
-        let results = library.find(text: text, shape: shape, tone: tone, minLength: lengths.0, maxLength: lengths.1, folder: folder, like: like)
+        let results = Array(library.find(text: text, shape: shape, tone: tone, minLength: lengths.0, maxLength: lengths.1, folder: folder, like: like).prefix(600))
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
-                    HStack(spacing: 7) {
-                        Image(systemName: "magnifyingglass").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.tertiary)
-                        TextField("Search by name, folder or note", text: $text).textFieldStyle(.plain).font(.system(size: 13))
-                    }
-                    .padding(.horizontal, 10).frame(height: 30)
-                    .background(Theme.raised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    Menu {
-                        Button("Add a Folder of Sounds…") {
-                            if let u = Places.chooseFolder("Choose a folder of sounds to add to the library.", start: Library.home) { library.add(folder: u) }
-                        }
-                        Button("Look Again for New Sounds") { Task { await library.scan() } }
-                        Divider()
-                        ForEach(library.folders, id: \.self) { f in
-                            Menu(f.lastPathComponent) {
-                                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([f]) }
-                                Button("Remove from the Library") { library.remove(folder: f) }
-                            }
-                        }
-                    } label: {
-                        Label("Folders", systemImage: "folder").font(.system(size: 12, weight: .semibold))
-                    }
-                    .menuStyle(.button).buttonStyle(PillButtonStyle()).menuIndicator(.hidden).fixedSize()
+            if docked {
+                // Under the timeline: what to look for on the left, the sounds beside it, so the list keeps its height.
+                HStack(spacing: 0) {
+                    ScrollView { filters(library).padding(14) }.frame(width: 400)
+                    Rectangle().fill(Theme.line).frame(width: 1)
+                    list(results, library)
                 }
+            } else {
+                filters(library).padding(16)
+                Rectangle().fill(Theme.line).frame(height: 1)
+                list(results, library)
+            }
+            Rectangle().fill(Theme.line).frame(height: 1)
+            HStack(spacing: 8) {
+                if library.scanning { ProgressView().controlSize(.small) }
+                Text(library.scanning ? library.progress : "\(results.count) of \(library.items.count) sounds\(results.count >= 600 ? ", first 600 shown" : "")")
+                    .font(.system(size: 11.5)).foregroundStyle(Theme.secondary)
+                if store.auditionPath != nil {
+                    Button { store.stopAudition() } label: {
+                        Label("Stop", systemImage: "stop.fill").font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(PillButtonStyle())
+                    .controlSize(.small)
+                }
+                Spacer()
+                Text("↑ ↓ move · Space plays or stops · Return places · drag onto a track").font(.system(size: 11.5)).foregroundStyle(Theme.tertiary).lineLimit(1)
+            }
+            .padding(.horizontal, 16).frame(height: 34)
+        }
+        .background(Theme.panel)
+        .task { await library.scan() }
+        // The arrow keys, Space and Return belong to the library while the pointer was last pressed inside it.
+        .onHover { library.hovered = $0 }
+        .onAppear { library.active = true }
+        .onDisappear { library.active = false; library.hovered = false; store.stopAudition() }
+    }
+
+    @ViewBuilder private func filters(_ library: Library) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                HStack(spacing: 7) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.tertiary)
+                    TextField("Search by name, folder or note", text: $text).textFieldStyle(.plain).font(.system(size: 13))
+                }
+                .padding(.horizontal, 10).frame(height: 30)
+                .background(Theme.raised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                Menu {
+                    Button("Add a Folder of Sounds…") {
+                        if let u = Places.chooseFolder("Choose a folder of sounds to add to the library.", start: Library.home) { library.add(folder: u) }
+                    }
+                    Button("Look Again for New Sounds") { Task { await library.scan() } }
+                    Toggle("Play Sounds as I Move Through Them", isOn: $autoplay)
+                    Divider()
+                    ForEach(library.folders, id: \.self) { f in
+                        Menu(f.lastPathComponent) {
+                            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([f]) }
+                            Button("Remove from the Library") { library.remove(folder: f) }
+                        }
+                    }
+                } label: {
+                    Label("Folders", systemImage: "folder").font(.system(size: 12, weight: .semibold))
+                }
+                .menuStyle(.button).buttonStyle(PillButtonStyle()).menuIndicator(.hidden).fixedSize()
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
                 chips("Shape", [("Any", shape == nil, { shape = nil })] + SoundItem.Shape.allCases.map { s in (s.title, shape == s, { shape = s }) })
+            }
+            if docked {
+                chips("Tone", [("Any", tone == nil, { tone = nil })] + SoundItem.Tone.allCases.map { t in (t.title, tone == t, { tone = t }) })
+                chips("Length", [("Any", length == 0, { length = 0 }), ("Under ½ s", length == 1, { length = 1 }), ("½ to 3 s", length == 2, { length = 2 }), ("Over 3 s", length == 3, { length = 3 })])
+            } else {
                 HStack(spacing: 18) {
                     chips("Tone", [("Any", tone == nil, { tone = nil })] + SoundItem.Tone.allCases.map { t in (t.title, tone == t, { tone = t }) })
                     chips("Length", [("Any", length == 0, { length = 0 }), ("Under ½ s", length == 1, { length = 1 }), ("½ to 3 s", length == 2, { length = 2 }), ("Over 3 s", length == 3, { length = 3 })])
                     Spacer(minLength: 0)
                 }
-                let folders = Array(Set(library.items.map(\.folder))).sorted()
-                if folders.count > 1 {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        chips("Folder", [("All", folder == nil, { folder = nil })] + folders.map { f in (f, folder == f, { folder = f }) })
-                    }
-                }
-                if let like {
-                    HStack(spacing: 6) {
-                        Text("Sounds shaped like \(like.name), closest first").font(.system(size: 11.5)).foregroundStyle(Theme.accent)
-                        Button("Clear") { self.like = nil }.buttonStyle(.plain).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Theme.accent)
-                    }
+            }
+            let folders = Array(Set(library.items.map(\.folder))).sorted()
+            if folders.count > 1 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    chips("Folder", [("All", folder == nil, { folder = nil })] + folders.map { f in (f, folder == f, { folder = f }) })
                 }
             }
-            .padding(16)
-            Rectangle().fill(Theme.line).frame(height: 1)
-            if library.items.isEmpty && !library.scanning {
-                VStack(spacing: 10) {
-                    Image(systemName: "waveform.badge.plus").font(.system(size: 30)).foregroundStyle(Theme.tertiary)
-                    Text("No sounds yet").font(.system(size: 15, weight: .semibold))
-                    Text("Put sound files in the folder below, or add a folder you already have. Each sound is measured once, so you can find it by its shape, tone, length and pitch.")
-                        .font(.system(size: 12.5)).foregroundStyle(Theme.secondary).multilineTextAlignment(.center).frame(maxWidth: 380)
-                    HStack {
-                        Button("Open the Sounds Folder") { NSWorkspace.shared.open(Library.home) }.buttonStyle(PillButtonStyle(prominent: true))
-                        Button("Add a Folder…") {
-                            if let u = Places.chooseFolder("Choose a folder of sounds to add to the library.", start: Library.home) { library.add(folder: u) }
-                        }
-                        .buttonStyle(PillButtonStyle())
-                    }
+            if let like {
+                HStack(spacing: 6) {
+                    Text("Sounds shaped like \(like.name), closest first").font(.system(size: 11.5)).foregroundStyle(Theme.accent)
+                    Button("Clear") { self.like = nil }.buttonStyle(.plain).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Theme.accent)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
+            }
+        }
+    }
+
+    @ViewBuilder private func list(_ results: [SoundItem], _ library: Library) -> some View {
+        if library.items.isEmpty && !library.scanning {
+            VStack(spacing: 10) {
+                Image(systemName: "waveform.badge.plus").font(.system(size: 30)).foregroundStyle(Theme.tertiary)
+                Text("No sounds yet").font(.system(size: 15, weight: .semibold))
+                Text("Put sound files in the folder below, or add a folder you already have. Each sound is measured once, so you can find it by its shape, tone, length and pitch.")
+                    .font(.system(size: 12.5)).foregroundStyle(Theme.secondary).multilineTextAlignment(.center).frame(maxWidth: 380)
+                HStack {
+                    Button("Open the Sounds Folder") { NSWorkspace.shared.open(Library.home) }.buttonStyle(PillButtonStyle(prominent: true))
+                    Button("Add a Folder…") {
+                        if let u = Places.chooseFolder("Choose a folder of sounds to add to the library.", start: Library.home) { library.add(folder: u) }
+                    }
+                    .buttonStyle(PillButtonStyle())
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if results.isEmpty && !library.scanning {
+            VStack(spacing: 6) {
+                Text("Nothing matches").font(.system(size: 14, weight: .semibold))
+                Text("Loosen the shape, tone or length, or clear the search.").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 4) {
-                        ForEach(results.prefix(600)) { item in
-                            LibraryRow(item: item, picked: picked == item.id, like: { like = item }) { picked = item.id }
+                        ForEach(results) { item in
+                            LibraryRow(item: item, picked: library.picked == item.id, like: { like = item }) { library.picked = item.id }
+                                .id(item.id)
                         }
                     }
                     .padding(.horizontal, 12).padding(.vertical, 10)
                 }
+                .onChange(of: library.picked) { _, id in if let id { proxy.scrollTo(id) } }
+                .onChange(of: results.map(\.id), initial: true) { _, _ in library.shown = results }
             }
-            Rectangle().fill(Theme.line).frame(height: 1)
-            HStack(spacing: 8) {
-                if library.scanning { ProgressView().controlSize(.small) }
-                Text(library.scanning ? library.progress : "\(results.count) of \(library.items.count) sounds\(results.count > 600 ? ", first 600 shown" : "")")
-                    .font(.system(size: 11.5)).foregroundStyle(Theme.secondary)
-                Spacer()
-                Text("Click to hear · double-click to place at the playhead").font(.system(size: 11.5)).foregroundStyle(Theme.tertiary)
-            }
-            .padding(.horizontal, 16).frame(height: 34)
         }
-        .frame(minWidth: 620, minHeight: 420)
-        .background(Theme.panel)
-        .task { await library.scan() }
     }
 
     private func chips(_ title: String, _ options: [(String, Bool, () -> Void)]) -> some View {

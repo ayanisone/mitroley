@@ -346,6 +346,7 @@ struct Track: Codable, Equatable, Identifiable {
     var plugins: [PluginSlot]?      // Audio Unit effects on this track, in order
     var duck: Duck?                 // music only: dips under voice; nil = off
     var lfe: Double?                // 0…1 how much of the track's low end also goes to the sub (immersive exports)
+    var fxBeforeFader: Bool?        // true = effects first, then the fader; nil = the fader first, then the effects
 
     func keys(_ p: AutoParam) -> [Keyframe] { automation[p.rawValue] ?? [] }
 
@@ -408,6 +409,7 @@ struct TrackGroup: Codable, Equatable, Identifiable {
     var mute = false
     var solo = false
     var collapsed = false
+    var plugins: [PluginSlot]?      // effects on the bus: every track in it that is not placed as an object goes through them
 }
 
 /// How the score should sound. Remembered with the session.
@@ -472,6 +474,8 @@ struct Project: Codable, Equatable {
     var fps = 30.0
     var duration = 30.0
     /// How far the timeline runs: the film, or the end of the last clip when sound carries on past the picture.
+    /// How far the timeline can be scrolled and worked in: past the last sound, with room to put more after it.
+    var reach: Double { extent + max(20, duration * 0.5) }
     var extent: Double { max(duration, tracks.reduce(0) { m, t in max(m, t.clips.reduce(0) { max($0, $1.start + $1.duration) }) }) }
     var video: VideoRef?
     var videoVolume = 0.0           // 0…1, the video's own soundtrack

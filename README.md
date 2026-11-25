@@ -106,3 +106,12 @@ File › Share Session packs a session into one .zip with its video and sounds. 
 ## Copyright
 
 Made by Ayan Mitra. Copyright © 2026 Ayan Mitra. All rights reserved. See `LICENSE`.
+
+## Mixer, buses and the dock
+
+- The Mixer and the Library open under the timeline (⌥⌘M, ⌥⌘L). Drag the edge above them to resize; the button at the right of their header moves either into a window of its own.
+- Each strip has **Pre / Post** (effects before or after the fader), **Duck** (sidechain: dip under every voice or under one chosen track, or make room with EQ) and an **output** (the master, or a bus).
+- A bus has its own fader, mute and solo, and can carry one sound preset for everything sent to it.
+- In the Library, ↑ and ↓ step through the sounds and play them, Space plays or stops, Return places the sound at the playhead, and a sound can be dragged onto a track.
+- Session › Check the Mix at the Cuts looks for the background jumping across a cut, dead air, peaks over -1 dBFS and a chopped ending.
+- The timeline scrolls past the end of the film, so sounds can sit after the last frame.

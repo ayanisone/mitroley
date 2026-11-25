@@ -183,6 +183,30 @@ enum SelfTest {
             check("Audio Unit runs on a track", r0 > 0.01 && r1 < r0 * 0.9 && abs(r2 - r0) < r0 * 0.02,
                   String(format: "noise level %.4f plain, %.4f through Apple's low-pass, %.4f bypassed", r0, r1, r2))
 
+            // Effects before the fader: with no effects, a track 12 dB down sounds the same either way round.
+            var order = plug
+            order.tracks[0].plugins = nil
+            order.tracks[0].volume = -12
+            let post = try Exporter.render(order, mode: .stereo, tail: 0, resolve: resolve)
+            order.tracks[0].fxBeforeFader = true
+            let pre = try Exporter.render(order, mode: .stereo, tail: 0, resolve: resolve)
+            let o0 = rms(post.l, 0.5, 2), o1 = rms(pre.l, 0.5, 2)
+            check("fader after effects keeps the level", o0 > 0.001 && abs(o1 / o0 - 1) < 0.03 && abs(o0 / r0 - 0.251) < 0.02,
+                  String(format: "%.4f fader first, %.4f effects first, %.4f at 0 dB", o0, o1, r0))
+
+            // A bus with an effect: the low-pass on the group reaches the track sent to it, and not one that is not.
+            var bus = plug
+            bus.tracks[0].plugins = nil
+            var g = TrackGroup(name: "Bus")
+            g.plugins = [PluginSlot(name: "AULowpass", maker: "Apple", type: kAudioUnitType_Effect, subtype: kAudioUnitSubType_LowPassFilter, manufacturer: kAudioUnitManufacturer_Apple)]
+            bus.groups = [g]
+            let outside = try Exporter.render(bus, mode: .stereo, tail: 0, resolve: resolve)
+            bus.tracks[0].groupID = g.id
+            let inside = try Exporter.render(bus, mode: .stereo, tail: 0, resolve: resolve)
+            let b0 = rms(outside.l, 0.5, 2), b1 = rms(inside.l, 0.5, 2)
+            check("bus effect reaches only its tracks", abs(b0 - r0) < r0 * 0.02 && b1 < r0 * 0.9 && b1 > 0.0005,
+                  String(format: "%.4f outside the bus, %.4f through it", b0, b1))
+
             // A "music effect" kind of Audio Unit, if this Mac has one, loads and passes sound in the same chain.
             if let music = Plugins.installed().first(where: { $0.audioComponentDescription.componentType == kAudioUnitType_MusicEffect }) {
                 let d = music.audioComponentDescription
@@ -195,6 +219,7 @@ enum SelfTest {
             // 9. Fold-downs of the 7.1.4 mix, on synthetic channels.
             downmixChecks(check)
             busChecks(check)
+            cutChecks(check)
 
             // 10. Exports.
             let sem = DispatchSemaphore(value: 0)
@@ -363,6 +388,29 @@ enum SelfTest {
     }
 
     /// The 5.1, Lo/Ro and laptop-and-phone fold-downs, checked on 12 channels with known content.
+    static func cutChecks(_ check: (String, Bool, String) -> Void) {
+        let sr = 48000.0
+        var seed: UInt64 = 7
+        func noise(_ seconds: Double, _ level: Float) -> [Float] {
+            (0..<Int(seconds * sr)).map { _ in
+                seed = seed &* 6364136223846793005 &+ 1442695040888963407
+                return (Float(seed >> 40) / Float(1 << 24) * 2 - 1) * level
+            }
+        }
+        // 0–3 s quiet room, 3–6 s a room 20 dB louder (a jump at the cut at 3), 6–7 s nothing (dead air), 7–10 s the quiet
+        // room again with one sample at full scale, and it is still sounding at the end.
+        var x = noise(3, 0.003) + noise(3, 0.03) + [Float](repeating: 0, count: Int(sr)) + noise(3, 0.02)
+        x[Int(8.2 * sr)] = 1
+        let found = CutCheck.run(l: x, r: x, rate: sr, cuts: [3, 8.6], duration: 10, fps: 25)
+        let kinds = found.map(\.kind)
+        let jump = found.first { $0.kind == .jump }
+        check("cut check finds the four faults", kinds.filter { $0 == .jump }.count == 1 && abs((jump?.time ?? 0) - 3) < 0.01 && kinds.contains(.silence) && kinds.filter { $0 == .peak }.count == 1 && kinds.contains(.chopped),
+              found.map { "\($0.kind.rawValue) at \(String(format: "%.1f", $0.time))" }.joined(separator: ", "))
+        let even = noise(10, 0.01).enumerated().map { i, v in Float(min(1, Double(10 * 48000 - i) / 48000)) * v }
+        let clean = CutCheck.run(l: even, r: even, rate: sr, cuts: [3, 6], duration: 10, fps: 25)
+        check("cut check passes an even mix", clean.isEmpty, clean.isEmpty ? "nothing found" : clean.map(\.title).joined(separator: "; "))
+    }
+
     static func downmixChecks(_ check: (String, Bool, String) -> Void) {
         let sr = 48000.0
         var seed: UInt64 = 0x9E3779B97F4A7C15

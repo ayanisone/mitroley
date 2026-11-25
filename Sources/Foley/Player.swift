@@ -128,7 +128,7 @@ final class Player {
     }
 
     func seek(_ t: Double) {
-        time = min(max(0, t), project.extent)
+        time = min(max(0, t), project.reach)
         graph.seek(to: time, playing: isPlaying)
         if isPlaying { startVideo(at: time) } else { seekVideo(time) }
         applyNow()
@@ -167,7 +167,7 @@ final class Player {
         var changed = false
         var levels = trackLevels
         for n in graph.tracks {
-            let pk = n.renderer.peak
+            let pk = n.renderer.peak * n.renderer.postGain
             n.renderer.peak = 0
             let old = levels[n.id] ?? 0
             var v = max(pk, old * 0.86)

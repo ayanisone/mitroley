@@ -128,8 +128,12 @@ struct FoleyApp: App {
             }
             CommandMenu("Session") {
                 RoomButton(menu: true)
-                WindowButton(id: "mixer", title: "Mixer", symbol: "", key: "m", help: "", menu: true)
-                WindowButton(id: "library", title: "Library", symbol: "", key: "l", help: "", menu: true)
+                Button(store.dock == "mixer" ? "Hide Mixer" : "Show Mixer") { store.toggleDock("mixer") }.keyboardShortcut("m", modifiers: [.command, .option])
+                Button(store.dock == "library" ? "Hide Library" : "Show Library") { store.toggleDock("library") }.keyboardShortcut("l", modifiers: [.command, .option])
+                WindowButton(id: "mixer", title: "Mixer in Its Own Window", symbol: "", key: "m", help: "", menu: true, plain: true)
+                WindowButton(id: "library", title: "Library in Its Own Window", symbol: "", key: "l", help: "", menu: true, plain: true)
+                Button("Check the Mix at the Cuts…") { store.showCutCheck = true }.keyboardShortcut("k", modifiers: [.command, .option])
+                Divider()
                 Button("Duplicate Clip") { store.duplicateClip() }.keyboardShortcut("d")
                 Button("Split Clip at Playhead") { store.splitClip() }.keyboardShortcut("t")
                 Button("Crossfade Clips") { store.crossfade() }.keyboardShortcut("f")
@@ -170,6 +174,7 @@ struct FoleyApp: App {
 
         Window("Mixer", id: "mixer") {
             MixerView()
+                .frame(minWidth: 520, minHeight: 440)
                 .environment(store)
                 .preferredColorScheme(.dark)
                 .tint(Theme.accent)
@@ -178,6 +183,7 @@ struct FoleyApp: App {
 
         Window("Library", id: "library") {
             LibraryView()
+                .frame(minWidth: 620, minHeight: 420)
                 .environment(store)
                 .preferredColorScheme(.dark)
                 .tint(Theme.accent)
@@ -199,10 +205,35 @@ enum Keys {
                let hit = w.contentView?.hitTest(event.locationInWindow), !(hit is NSText), !(hit is NSTextField) {
                 w.makeFirstResponder(nil)
             }
+            // A press inside the library hands it the keys; a press anywhere else takes them back.
+            if event.window?.attachedSheet == nil { store.library.active = store.library.hovered }
             return event
         }
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // The sound library: up and down step through the sounds, also from its search box.
+            let library = store.library
+            let plain = event.modifierFlags.intersection([.command, .option, .control]).isEmpty
+            if library.active, plain, NSApp.keyWindow?.attachedSheet == nil, [125, 126].contains(event.keyCode), !library.shown.isEmpty {
+                if let item = library.step(event.keyCode == 125 ? 1 : -1) {
+                    if UserDefaults.standard.object(forKey: "libraryAutoplay") as? Bool ?? true { store.audition(path: item.path, again: true) } else { store.stopAudition() }
+                }
+                return nil
+            }
             if let responder = NSApp.keyWindow?.firstResponder, responder is NSText { return event }
+            if library.active, plain, NSApp.keyWindow?.attachedSheet == nil {
+                switch event.keyCode {
+                case 49: // space: stop what is playing, or play the selected sound
+                    if store.auditionPath != nil || store.auditioning != nil { store.stopAudition(); return nil }
+                    if let item = library.pickedItem { store.audition(path: item.path, again: true); return nil }
+                case 36 where library.pickedItem != nil: // return: place it at the playhead
+                    if let item = library.pickedItem { store.place(item) }
+                    return nil
+                case 53 where store.auditionPath != nil:
+                    store.stopAudition()
+                    return nil
+                default: break
+                }
+            }
             if NSApp.keyWindow?.attachedSheet != nil { return event }
             let mods = event.modifierFlags.intersection([.command, .option, .control])
             guard mods.isEmpty else { return event }
@@ -224,7 +255,7 @@ enum Keys {
                 store.deleteMarquee()
                 return nil
             case 49: // space; while a take is auditioning it only stops that
-                if store.auditioning != nil { store.stopAudition() } else { store.player.toggle() }
+                if store.auditioning != nil || store.auditionPath != nil { store.stopAudition() } else { store.player.toggle() }
                 return nil
             case 53 where store.loopPending != nil: // esc: drop a half-set loop
                 store.loopPending = nil

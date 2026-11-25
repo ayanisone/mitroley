@@ -5,17 +5,18 @@ import AVFoundation
 /// Music dipping under voice. Off unless switched on for a music track.
 struct Duck: Codable, Equatable {
     var depth = 9.0     // dB the music drops by while someone is speaking
+    var source: UUID?   // the track it listens to; nil = every voice
 }
 
 enum VoiceActivity {
     /// Stretches of a recording where someone is speaking, in seconds. Looks at the level in the band speech
     /// lives in (300 Hz to 3.4 kHz), so music or rumble under a voice does not count as voice on its own.
-    static func regions(left: [Float], right: [Float], sampleRate: Double = AudioCache.sampleRate) -> [ClosedRange<Double>] {
+    static func regions(left: [Float], right: [Float], sampleRate: Double = AudioCache.sampleRate, speech: Bool = true) -> [ClosedRange<Double>] {
         let n = min(left.count, right.count)
         guard n > Int(sampleRate / 4) else { return [] }
         var mono = [Float](repeating: 0, count: n)
         for i in 0..<n { mono[i] = (left[i] + right[i]) * 0.5 }
-        Downmix.bandpass(&mono, low: 300, high: 3400)
+        if speech { Downmix.bandpass(&mono, low: 300, high: 3400) }
         let hop = Int(sampleRate / 50)      // 20 ms
         let frames = n / hop
         var level = [Float](repeating: 0, count: frames)
@@ -73,16 +74,18 @@ enum VoiceActivity {
 
 extension Store {
     /// Where voice is heard on the timeline: every clip on a voice track, and the film's own sound when it is turned up.
-    nonisolated static func voiceRegions(_ p: Project, folder: URL, video: URL?) -> (regions: [ClosedRange<Double>], filmUnreadable: Bool) {
+    /// With `source`, it listens to that one track instead, whatever is on it.
+    nonisolated static func voiceRegions(_ p: Project, folder: URL, video: URL?, source: UUID? = nil) -> (regions: [ClosedRange<Double>], filmUnreadable: Bool) {
         var all: [ClosedRange<Double>] = []
+        let speech = source == nil || p.tracks.first { $0.id == source }?.kind == .dialogue
         func regions(of url: URL) -> [ClosedRange<Double>]? {
             guard let buf = AudioCache.shared.buffer(url), let ch = buf.floatChannelData, buf.frameLength > 0 else { return nil }
             let n = Int(buf.frameLength)
-            return VoiceActivity.regions(left: Array(UnsafeBufferPointer(start: ch[0], count: n)), right: Array(UnsafeBufferPointer(start: ch[1], count: n)))
+            return VoiceActivity.regions(left: Array(UnsafeBufferPointer(start: ch[0], count: n)), right: Array(UnsafeBufferPointer(start: ch[1], count: n)), speech: speech)
         }
         let anySolo = p.anySolo
-        for t in p.tracks where t.kind == .dialogue && !t.mute && (!anySolo || t.solo) {
-            for c in t.clips {
+        for t in p.tracks where (source == nil ? t.kind == .dialogue && !t.mute && (!anySolo || t.solo) : t.id == source) {
+            for c in t.clips where c.muted != true {
                 guard let take = c.take, let found = regions(of: Store.url(for: take, in: folder)) else { continue }
                 let speed = max(0.01, c.speed)
                 for r in found {
@@ -94,14 +97,14 @@ extension Store {
             }
         }
         var unreadable = false
-        if p.videoVolume > 0.001, let video {
+        if source == nil, p.videoVolume > 0.001, let video {
             if let found = regions(of: video) { all += found.filter { $0.lowerBound < p.duration } } else { unreadable = true }
         }
         return (VoiceActivity.merge(all, gap: 0.4), unreadable)
     }
 
     /// Switches ducking on a music track on (writing its volume lane) or off (clearing it).
-    func setDucking(_ id: UUID, on: Bool, depth: Double? = nil) async {
+    func setDucking(_ id: UUID, on: Bool, depth: Double? = nil, source: UUID?? = nil) async {
         guard let track = project.tracks.first(where: { $0.id == id }) else { return }
         if !on {
             guard track.duck != nil else { return }
@@ -113,11 +116,18 @@ extension Store {
             return
         }
         let d = min(24, max(2, depth ?? track.duck?.depth ?? Duck().depth))
+        // The track it listens to: the one asked for, else the one it already had, else every voice. Never itself.
+        var from = source ?? track.duck?.source
+        if from == id || !project.tracks.contains(where: { $0.id == from }) { from = nil }
         let p = project, folder = self.folder, video = videoURL
-        busy = "Listening for voice"
-        let found = await Task.detached(priority: .userInitiated) { Store.voiceRegions(p, folder: folder, video: video) }.value
+        busy = from == nil ? "Listening for voice" : "Listening to the other track"
+        let found = await Task.detached(priority: .userInitiated) { Store.voiceRegions(p, folder: folder, video: video, source: from) }.value
         busy = nil
         guard !found.regions.isEmpty else {
+            if let from, let name = project.tracks.first(where: { $0.id == from })?.name {
+                say("Nothing is heard on \(name) to duck under.", error: true)
+                return
+            }
             say(found.filmUnreadable ? "Could not read the film's own sound to find the voice. Put the voice on a Voice-over track, or use File › Use the Film's Own Sound first."
                                      : "No voice found to duck under. It looks on Voice-over tracks, and in the film's own sound when that is turned up.", error: true)
             return
@@ -126,12 +136,12 @@ extension Store {
         let replaced = track.duck == nil && !(track.automation[AutoParam.volume.rawValue] ?? []).isEmpty
         mutate { p in
             guard let i = p.trackIndex(id) else { return }
-            p.tracks[i].duck = Duck(depth: d)
+            p.tracks[i].duck = Duck(depth: d, source: from)
             p.tracks[i].automation[AutoParam.volume.rawValue] = keys
             p.tracks[i].lane = .volume
         }
         let count = VoiceActivity.merge(found.regions, gap: 1.1).count
-        say("The music dips \(String(format: "%.0f", d)) dB under \(count) voice passage\(count == 1 ? "" : "s"). The points are in its Volume lane."
+        say("\(track.name) dips \(String(format: "%.0f", d)) dB under \(count) \(from == nil ? "voice " : "")passage\(count == 1 ? "" : "s")\(from.flatMap { f in project.tracks.first { $0.id == f }?.name }.map { " of " + $0 } ?? ""). The points are in its Volume lane."
             + (replaced ? " This replaced the volume automation that was there; Undo brings it back." : ""))
     }
 }

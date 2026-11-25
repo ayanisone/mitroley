@@ -655,8 +655,12 @@ struct WindowButton: View {
     let key: KeyEquivalent
     let help: String
     var menu = false
+    /// A menu entry under its own title, without a shortcut.
+    var plain = false
     var body: some View {
-        if menu {
+        if menu, plain {
+            Button(title) { openWindow(id: id) }
+        } else if menu {
             Button("Show \(title)") { openWindow(id: id) }.keyboardShortcut(key, modifiers: [.command, .option])
         } else {
             Button { openWindow(id: id) } label: { Image(systemName: symbol) }.help(help)

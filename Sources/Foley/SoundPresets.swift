@@ -127,27 +127,24 @@ extension Store {
     }
 }
 
+extension Store {
+    /// One sound for a whole bus, in place of the one it had.
+    func applyPreset(_ preset: SoundPreset?, toGroup id: UUID) {
+        let new = preset?.slots() ?? []
+        editGroup(id) { $0.plugins = new.isEmpty ? nil : new }
+    }
+}
+
 /// Track inspector: pick a ready-made sound.
 struct PresetSection: View {
     @Environment(Store.self) private var store
     let track: Track
+    @State private var open = false
 
     var body: some View {
         let current = track.plugins?.first { $0.preset != nil }?.preset
         SectionTitle("Sound preset")
-        Menu {
-            Button("None") { store.applyPreset(nil, to: track.id) }
-            ForEach(SoundPreset.groups, id: \.self) { group in
-                Section(group) {
-                    ForEach(SoundPreset.all.filter { $0.group == group }) { p in
-                        Toggle(isOn: Binding(get: { current == p.name }, set: { if $0 { store.applyPreset(p, to: track.id) } })) {
-                            Text(p.name)
-                            Text(p.about)
-                        }
-                    }
-                }
-            }
-        } label: {
+        Button { open.toggle() } label: {
             HStack {
                 Text(current ?? "None").font(.system(size: 12.5, weight: .medium)).foregroundStyle(current == nil ? Theme.secondary : Color.white)
                 Spacer()
@@ -157,8 +154,58 @@ struct PresetSection: View {
             .background(Theme.raised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .contentShape(Rectangle())
         }
-        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
+        .buttonStyle(.plain)
+        .onChange(of: store.peek) { _, v in if v == "presets" { open = true; store.peek = nil } }
+        .popover(isPresented: $open, arrowEdge: .leading) {
+            PresetList(current: current) { p in
+                store.applyPreset(p, to: track.id)
+                open = false
+            }
+        }
         Caption(SoundPreset.all.first { $0.name == current }?.about
                 ?? "A ready-made sound for this track: phone, radio, underwater, old record and more. Built from the effects that come with macOS, so it is light, plays live and is in every export.")
+    }
+}
+
+/// The presets as a list drawn here, so every row sits on the same grid: one height, one gap, headings evenly spaced.
+struct PresetList: View {
+    let current: String?
+    let pick: (SoundPreset?) -> Void
+    @State private var hover: String?
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                row(name: "None", about: "The track as it is.", on: current == nil) { pick(nil) }
+                ForEach(SoundPreset.groups, id: \.self) { group in
+                    Rectangle().fill(Theme.line).frame(height: 1).padding(.horizontal, 10).padding(.vertical, 6)
+                    Text(group).font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.tertiary)
+                        .padding(.horizontal, 10).frame(height: 22, alignment: .leading)
+                    ForEach(SoundPreset.all.filter { $0.group == group }) { p in
+                        row(name: p.name, about: p.about, on: current == p.name) { pick(p) }
+                    }
+                }
+            }
+            .padding(6)
+        }
+        .frame(width: 380, height: 460)
+    }
+
+    private func row(name: String, about: String, on: Bool, action: @escaping () -> Void) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.accent).opacity(on ? 1 : 0).frame(width: 12)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(name).font(.system(size: 13, weight: .medium)).foregroundStyle(.white)
+                Text(about).font(.system(size: 11)).foregroundStyle(Theme.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8).frame(height: 40)
+        .background(hover == name ? Color.white.opacity(0.09) : .clear, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .contentShape(Rectangle())
+        .onHover { inside in if inside { hover = name } else if hover == name { hover = nil } }
+        .onTapGesture(perform: action)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
     }
 }

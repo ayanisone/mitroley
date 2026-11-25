@@ -60,6 +60,8 @@ final class TrackRenderer {
     var targetGain: Float = 1
     private var gain: Float = 1
     var peak: Float = 0
+    /// The fader when it sits after the effects, so the meter still shows what the track sends out.
+    var postGain: Float = 1
 
     init() { lock.initialize(to: os_unfair_lock()) }
     deinit { clips?.deallocate(); lock.deallocate() }
@@ -181,6 +183,13 @@ final class MixGraph {
     let environment = AVAudioEnvironmentNode()
     private(set) var tracks: [TrackNodes] = []
     private(set) var spaces: [SpaceNodes] = []
+    /// A group that has effects of its own: its tracks' stereo signal is summed here, goes through the effects, then to the master.
+    struct BusNodes {
+        let id: UUID
+        let input: AVAudioMixerNode
+        var plugins: [AVAudioUnit]
+    }
+    private(set) var buses: [BusNodes] = []
     private var clockNode: AVAudioSourceNode?
     /// The master compressor and limiter on the live output. Exports run the same code over the rendered mix instead.
     private(set) var bus: BusProcessor?
@@ -227,7 +236,16 @@ final class MixGraph {
     }
 
     static func signature(_ p: Project) -> String {
-        p.tracks.map { $0.id.uuidString + ($0.plugins ?? []).map { "+" + $0.id.uuidString }.joined() }.joined(separator: ",") + "|" + p.spaces.map { $0.id.uuidString + ($0.ir.map { "/" + $0 } ?? "") }.joined(separator: ",")
+        p.tracks.map { $0.id.uuidString + ($0.plugins ?? []).map { "+" + $0.id.uuidString }.joined() }.joined(separator: ",") + "|" + p.spaces.map { $0.id.uuidString + ($0.ir.map { "/" + $0 } ?? "") }.joined(separator: ",") + busSignature(p)
+    }
+
+    /// Groups that carry effects, with who is in them. Empty for a session without any, so nothing changes there.
+    static func busSignature(_ p: Project) -> String {
+        let live = (p.groups ?? []).filter { !($0.plugins ?? []).isEmpty }
+        guard !live.isEmpty else { return "" }
+        return "|bus:" + live.map { g in
+            g.id.uuidString + (g.plugins ?? []).map { "+" + $0.id.uuidString }.joined() + "=" + p.tracks.filter { $0.groupID == g.id }.map(\.id.uuidString).joined(separator: "&")
+        }.joined(separator: ",")
     }
 
     /// Rebuilds nodes when tracks or spaces were added or removed. Returns true if it rebuilt.
@@ -252,6 +270,25 @@ final class MixGraph {
         for s in spaces {
             for n in [s.input, s.delay, s.reverb, s.eq] as [AVAudioNode] { engine.detach(n) }
             if let c = s.convolver { engine.detach(c) }
+        }
+        for b in buses {
+            engine.detach(b.input)
+            for u in b.plugins { engine.detach(u) }
+        }
+        buses = []
+        for g in p.groups ?? [] {
+            let units = (g.plugins ?? []).compactMap { Plugins.make($0) }
+            guard !units.isEmpty else { continue }
+            let input = AVAudioMixerNode()
+            engine.attach(input)
+            var last: AVAudioNode = input
+            for u in units {
+                engine.attach(u)
+                engine.connect(last, to: u, format: stereo)
+                last = u
+            }
+            engine.connect(last, to: engine.mainMixerNode, format: stereo)
+            buses.append(BusNodes(id: g.id, input: input, plugins: units))
         }
         // Never built smaller than it was: spare track and space nodes sit silent, so going back to a session with more
         // tracks (the other cut of a film) can reuse them instead of rebuilding.
@@ -324,7 +361,9 @@ final class MixGraph {
                 plugins.append((slot.id, unit))
             }
             engine.connect(last, to: points, fromBus: 0, format: stereo)
-            engine.connect(dryStereo, to: engine.mainMixerNode, format: stereo)
+            // Into its bus when the group has effects, else straight to the master.
+            let out: AVAudioNode = buses.first { $0.id == tr.groupID }?.input ?? engine.mainMixerNode
+            engine.connect(dryStereo, to: out, format: stereo)
             engine.connect(dryMono, to: environment, format: mono)
             dryMono.renderingAlgorithm = offline ? .HRTFHQ : .auto
             dryMono.outputVolume = 0
@@ -343,6 +382,8 @@ final class MixGraph {
     /// Re-labels the existing nodes for a project of the same shape. false if the shape differs.
     private func rebind(_ p: Project) -> Bool {
         guard !tracks.isEmpty, p.tracks.count <= tracks.count, p.spaces.count <= spaces.count else { return false }
+        // Buses are wired by hand per session: with any in play, build again.
+        guard buses.isEmpty, Self.busSignature(p).isEmpty else { return false }
         // Spare nodes beyond this project's own must be plain: no plug-ins, no impulse response.
         for i in p.tracks.count..<tracks.count where !tracks[i].plugins.isEmpty { return false }
         for j in p.spaces.count..<spaces.count where spaces[j].convolver != nil { return false }
@@ -450,7 +491,11 @@ final class MixGraph {
         for (i, tr) in p.tracks.enumerated() where i < tracks.count {
             let n = tracks[i]
             let m = p.mix(for: tr, at: t, anySolo: anySolo)
-            n.renderer.targetGain = Float(m.gain)
+            // Effects before the fader: the clips reach the effects at full level and the fader sits on the way out.
+            let pre = tr.fxBeforeFader == true
+            n.renderer.targetGain = pre ? (m.gain > 0 ? 1 : 0) : Float(m.gain)
+            n.renderer.postGain = pre ? Float(m.gain) : 1
+            let out: Float = pre ? Float(m.gain) : 1
             if snap { n.renderer.snapGain() }
 
             n.eq.bands[0].frequency = Float(m.lowCut)
@@ -473,15 +518,15 @@ final class MixGraph {
                 pan = 0
                 sendsOn = false
             }
-            n.dryStereo.outputVolume = stereoOn ? 1 : 0
+            n.dryStereo.outputVolume = stereoOn ? out : 0
             n.dryStereo.pan = Float(min(1, max(-1, pan)))
-            n.dryMono.outputVolume = monoOn ? 1 : 0
+            n.dryMono.outputVolume = monoOn ? out : 0
             if monoOn {
                 // Room coordinates → listener space (x right, y up, -z ahead), on a 2 m sphere-ish room.
                 n.dryMono.position = AVAudio3DPoint(x: Float(m.position.x * 2), y: Float(m.position.z * 2), z: Float(-m.position.y * 2))
             }
             for (sid, node) in n.sends {
-                node.outputVolume = sendsOn ? Float(m.sends[sid] ?? 0) : 0
+                node.outputVolume = sendsOn ? Float(m.sends[sid] ?? 0) * out : 0
             }
         }
     }

@@ -16,58 +16,82 @@ struct Splash: View {
     var body: some View {
         if phase < 3 {
             ZStack {
-                Color.black.opacity(phase == 1 ? 0.92 : 0)
-                VStack(spacing: 14) {
-                    Image(systemName: "waveform")
-                        .font(.system(size: 54, weight: .semibold))
-                        .foregroundStyle(Theme.accent)
-                        .symbolEffect(.variableColor.iterative, isActive: phase == 1 && !reduceMotion)
-                    Text("mitroley").font(.system(size: 34, weight: .semibold)).tracking(-0.8).foregroundStyle(.white)
+                // The window's own background, so it reads as the app arriving, not a black card thrown over it.
+                Theme.bg.opacity(phase == 1 ? 1 : 0)
+                VStack(spacing: 18) {
+                    Image(nsImage: NSApp.applicationIconImage)
+                        .resizable().interpolation(.high)
+                        .frame(width: 112, height: 112)
+                        .shadow(color: .black.opacity(0.5), radius: 18, y: 8)
+                    Text("mitroley").font(.system(size: 22, weight: .medium)).tracking(-0.3).foregroundStyle(.white.opacity(0.92))
                 }
-                .scaleEffect(reduceMotion ? 1 : (phase == 0 ? 0.92 : phase == 1 ? 1 : 1.06))
+                .scaleEffect(reduceMotion ? 1 : (phase == 0 ? 0.96 : 1))
                 .opacity(phase == 1 ? 1 : 0)
             }
             .ignoresSafeArea()
             .allowsHitTesting(phase == 1)
+            .accessibilityHidden(true)
             .onAppear {
                 guard !Self.shown, !CommandLine.arguments.contains("--selftest") else { phase = 3; return }
                 Self.shown = true
                 if sound { Self.chime() }
-                withAnimation(.easeOut(duration: 0.28)) { phase = 1 }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.05) {
-                    withAnimation(.easeIn(duration: 0.35)) { phase = 2 }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { phase = 3 }
+                // Already there on the first frame; only the leaving is animated.
+                phase = 1
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                    withAnimation(.easeInOut(duration: 0.45)) { phase = 2 }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { phase = 3 }
                 }
             }
         }
     }
 
-    /// Two soft notes a fifth apart, made here so there is no sound file to ship.
+    /// Your own opening sound, if you put one here: ~/Library/Application Support/mitroley/opening.wav (or .mp3, .m4a, .aif).
+    static var custom: URL? {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("mitroley")
+        return ["wav", "aif", "aiff", "m4a", "mp3"].map { dir.appendingPathComponent("opening." + $0) }.first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    /// One soft, warm chord that swells in and rings out, made here so there is no sound file to ship.
     static func chime() {
-        let rate = 44100.0, length = 1.1
+        if let custom, let p = try? AVAudioPlayer(contentsOf: custom) {
+            player = p
+            p.play()
+            return
+        }
+        let wav = chord()
+        player = try? AVAudioPlayer(data: wav)
+        player?.volume = 0.55
+        player?.play()
+    }
+
+    /// D major, open: D3, A3, D4, F♯4, A4. Sines with a touch of second harmonic, each side tuned a hair apart for width.
+    static func chord() -> Data {
+        let rate = 48000.0, length = 2.4
         let n = Int(rate * length)
+        let notes: [(hz: Double, level: Double)] = [(146.83, 0.9), (220.0, 0.7), (293.66, 0.8), (369.99, 0.55), (440.0, 0.4)]
         var pcm = Data(capacity: n * 4)
         for i in 0..<n {
             let t = Double(i) / rate
-            func note(_ hz: Double, at start: Double) -> Double {
-                let u = t - start
-                guard u >= 0 else { return 0 }
-                let attack = min(1, u / 0.012), decay = exp(-u * 5.2)
-                return attack * decay * (sin(2 * .pi * hz * u) + 0.28 * sin(2 * .pi * hz * 2 * u) + 0.1 * sin(2 * .pi * hz * 3 * u))
+            // In over 60 ms, then a slow fall; the last 0.3 s fades to nothing so it never clicks off.
+            let swell = min(1, t / 0.06), fall = exp(-t * 1.9), tail = min(1, (length - t) / 0.3)
+            let env = swell * swell * (3 - 2 * swell) * fall * tail
+            var l = 0.0, r = 0.0
+            for (k, note) in notes.enumerated() {
+                let drift = 0.35 + 0.1 * Double(k)
+                // Higher notes die away sooner, as on a struck string.
+                let own = exp(-t * Double(k) * 0.35)
+                l += note.level * own * (sin(2 * .pi * (note.hz - drift) * t) + 0.12 * sin(2 * .pi * 2 * (note.hz - drift) * t))
+                r += note.level * own * (sin(2 * .pi * (note.hz + drift) * t) + 0.12 * sin(2 * .pi * 2 * (note.hz + drift) * t))
             }
-            let v = 0.2 * (note(587.33, at: 0) + note(880, at: 0.11))
-            // A little wider on the second note.
-            let l = Int16(max(-1, min(1, v)) * 32000), r = Int16(max(-1, min(1, v * 0.94)) * 32000)
-            withUnsafeBytes(of: l.littleEndian) { pcm.append(contentsOf: $0) }
-            withUnsafeBytes(of: r.littleEndian) { pcm.append(contentsOf: $0) }
+            let a = Int16(max(-1, min(1, l * env * 0.2)) * 32000), b = Int16(max(-1, min(1, r * env * 0.2)) * 32000)
+            withUnsafeBytes(of: a.littleEndian) { pcm.append(contentsOf: $0) }
+            withUnsafeBytes(of: b.littleEndian) { pcm.append(contentsOf: $0) }
         }
         func u32(_ v: Int) -> Data { withUnsafeBytes(of: UInt32(v).littleEndian) { Data($0) } }
         func u16(_ v: Int) -> Data { withUnsafeBytes(of: UInt16(v).littleEndian) { Data($0) } }
         var wav = Data("RIFF".utf8) + u32(36 + pcm.count) + Data("WAVEfmt ".utf8) + u32(16) + u16(1) + u16(2) + u32(Int(rate)) + u32(Int(rate) * 4) + u16(4) + u16(16)
         wav += Data("data".utf8) + u32(pcm.count) + pcm
-        player = try? AVAudioPlayer(data: wav)
-        player?.volume = 0.6
-        player?.play()
+        return wav
     }
 }
 

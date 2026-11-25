@@ -93,6 +93,12 @@ final class Store {
     var canRedo = false
     let player = Player()
     var showDub = false
+    var showCutCheck = false
+    /// Asks a small panel to open itself: "presets" or "duck", for the selected track. Set by the voice helper.
+    var peek: String?
+    /// What is open under the timeline: "mixer", "library" or nothing. Remembered between launches.
+    var dock: String? = UserDefaults.standard.string(forKey: "dock") { didSet { UserDefaults.standard.set(dock, forKey: "dock") } }
+    func toggleDock(_ which: String) { dock = dock == which ? nil : which }
     /// Languages being dubbed right now, and how each is getting on.
     var dubJobs: [DubJob] = []
     /// Your own sounds, indexed.
@@ -875,8 +881,8 @@ final class Store {
     var auditionPath: String?
 
     /// Plays a file on its own (a library sound); the same file again stops it.
-    func audition(path: String) {
-        let same = auditionPath == path
+    func audition(path: String, again: Bool = false) {
+        let same = auditionPath == path && !again
         stopAudition()
         guard !same, let a = try? AVAudioPlayer(contentsOf: URL(fileURLWithPath: path)), a.play() else { return }
         audition = a

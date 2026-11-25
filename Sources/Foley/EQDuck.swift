@@ -130,17 +130,18 @@ enum EQDuck {
 
 extension Store {
     /// The voice across the whole timeline as one mono signal: the Voice-over tracks, and the film's own sound when it is turned up.
-    nonisolated static func voiceSignal(_ p: Project, folder: URL, video: URL?) -> [Float] {
+    nonisolated static func voiceSignal(_ p: Project, folder: URL, video: URL?, source: UUID? = nil) -> [Float] {
         var q = p
         let anySolo = p.anySolo
-        q.tracks = p.tracks.filter { $0.kind == .dialogue && !$0.mute && (!anySolo || $0.solo) }
-        for i in q.tracks.indices { q.tracks[i].solo = false; q.tracks[i].spaceMode = .dry; q.tracks[i].plugins = nil }
+        q.tracks = p.tracks.filter { source == nil ? $0.kind == .dialogue && !$0.mute && (!anySolo || $0.solo) : $0.id == source }
+        q.groups = nil
+        for i in q.tracks.indices { q.tracks[i].solo = false; q.tracks[i].mute = false; q.tracks[i].groupID = nil; q.tracks[i].spaceMode = .dry; q.tracks[i].plugins = nil }
         q.rack = []
         var mono = [Float](repeating: 0, count: Int(p.extent * AudioCache.sampleRate) + 1)
         if !q.tracks.isEmpty, let mix = try? Exporter.render(q, mode: .stereo, tail: 0, resolve: { Store.url(for: $0, in: folder) }) {
             for i in 0..<min(mono.count, mix.l.count) { mono[i] = (mix.l[i] + mix.r[i]) * 0.5 }
         }
-        if p.videoVolume > 0.001, let video, let buf = AudioCache.shared.buffer(video), let ch = buf.floatChannelData {
+        if source == nil, p.videoVolume > 0.001, let video, let buf = AudioCache.shared.buffer(video), let ch = buf.floatChannelData {
             let g = Float(p.videoVolume)
             for i in 0..<min(mono.count, Int(buf.frameLength)) { mono[i] += (ch[0][i] + ch[1][i]) * 0.5 * g }
         }
@@ -148,7 +149,7 @@ extension Store {
     }
 
     /// Carves room for the voice in every clip on a music track. Each clip gets a new take; the original stays as the take before it.
-    func carveForVoice(_ id: UUID, maxCut: Double) async {
+    func carveForVoice(_ id: UUID, maxCut: Double, source: UUID? = nil) async {
         guard let track = project.tracks.first(where: { $0.id == id }) else { return }
         let p = project, folder = self.folder, video = videoURL
         let audio = subfolder("Audio")
@@ -156,7 +157,7 @@ extension Store {
         defer { busy = nil }
         struct Done { let clip: UUID; let take: Take; let deepest: Double }
         let result = await Task.detached(priority: .userInitiated) { () -> (done: [Done], silent: Bool, skipped: Int) in
-            let voice = Store.voiceSignal(p, folder: folder, video: video)
+            let voice = Store.voiceSignal(p, folder: folder, video: video, source: source)
             var top: Float = 0
             vDSP_maxmgv(voice, 1, &top, vDSP_Length(voice.count))
             guard top > 0.003 else { return ([], true, 0) }

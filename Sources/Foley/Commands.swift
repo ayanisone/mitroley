@@ -253,6 +253,7 @@ final class Commands {
               "height_trim_db": p("number", "-12…6. Level of the height speakers in those folds."),
               "loudness_meter": p("boolean", "Show or hide the loudness meter in the rack."),
               "remove": p("array", "Effects to take out of the rack.", extra: ["items": ["type": "string", "enum": EffectKind.allCases.map(\.rawValue)]])]),
+        tool("check_cuts", "Renders the mix once and looks for faults a viewer hears as mistakes: the background level jumping 8 dB or more across a cut, total silence for a third of a second or more, peaks over -1 dBFS, and sound still playing at the film's last frame. Returns each finding with its time. Changes nothing. Run it after a pass, and fix what it finds."),
         tool("measure_mix", "Renders the whole session once and returns integrated loudness (LUFS, BS.1770-4) and true peak (dBTP) of the 7.1.4, the 5.1, the stereo fold-down and the laptop-and-phone stereo. Use it to check a mix against a delivery spec such as -14 LUFS, -1 dBTP. It renders the whole session, so it can take a minute or two."),
         tool("export", "Renders the session to a file and returns its path. movie = the video with the stereo mix. stereo and binaural = WAV. stems = a folder with one WAV per track; groupStems = one WAV per group. bed714 = 12-channel 7.1.4 WAV. surround51 = 6-channel 5.1 WAV folded from the 7.1.4. stereoFold = the standard Lo/Ro stereo fold-down of that 5.1 (what a TV does with a surround mix). speakers = stereo for laptop and phone speakers, folded from the 7.1.4 with widened surrounds, a height cue and bass harmonics, -14 LUFS, -1 dBTP, checked in mono. mixdowns = a folder with the 7.1.4, 5.1, stereo fold-down, laptop-and-phone stereo, its mono sum and a text file with the loudness of each. adm = ADM BWF with a 7.1.2 bed and one object per spatial track, for Atmos workflows.",
              ["format": p("string", "Output format.", extra: ["enum": ExportFormat.allCases.map(\.rawValue)]),
@@ -720,6 +721,10 @@ final class Commands {
                 for name in (a["remove"] as? [String]) ?? [] { if let k = EffectKind(rawValue: name) { p.removeEffect(k) } }
             }
             return CommandResult(json: ["ok": true, "master": masterJSON(store.project)])
+        case "check_cuts":
+            let found = try await store.checkCuts()
+            return CommandResult(json: ["cuts_checked": store.project.scenes.count,
+                                        "findings": found.map { ["kind": $0.kind.rawValue, "time": r($0.time), "what": $0.title, "detail": $0.detail] as [String: Any] }])
         case "measure_mix":
             let rows = try await store.measureMix()
             return CommandResult(json: ["formats": rows.map { ["format": $0.name, "lufs": $0.lufs.map { r($0) } ?? NSNull(), "true_peak_dbtp": r($0.truePeak)] as [String: Any] },

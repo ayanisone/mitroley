@@ -26,7 +26,7 @@ struct ZoomPreview: View {
         let p = store.project
         let pinned = Metrics.ruler + Metrics.film + Metrics.scene
         func x(_ t: Double) -> CGFloat { CGFloat(t * pps) - x0 }
-        let content = CGFloat(p.extent * pps) + 24
+        let content = CGFloat(p.reach * pps) + 24
         let right = min(size.width, content - x0)
         let line = Theme.line
 

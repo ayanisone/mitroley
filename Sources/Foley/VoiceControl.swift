@@ -108,6 +108,9 @@ extension VoiceAgent {
         case "redo":
             guard store.canRedo else { throw ServiceError(message: "There is nothing to redo.") }
             store.redo(); return ["ok": true]
+        case "peek":
+            store.peek = str("what")
+            return ["ok": true]
         case "menu":
             return try pressMenu((a["title"] as? String) ?? "")
         case "set_helper_voice":
