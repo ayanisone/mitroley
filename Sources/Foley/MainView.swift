@@ -36,6 +36,8 @@ struct MainView: View {
                                 .onEnded { _ in dragStart = nil }))
                     TimelineView()
                         .frame(height: tl)
+                        // Tell the flag where the panels are, so it goes out of focus behind them.
+                        .onChange(of: tl + dock, initial: true) { _, h in FlagLayout.bottom = h + (dock > 0 ? 2 : 1); FlagLayout.inspector = Metrics.inspector }
                     if dock > 0 {
                         Rectangle()
                             .fill(Theme.line)

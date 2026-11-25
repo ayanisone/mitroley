@@ -24,11 +24,20 @@ enum Backdrops {
     }
 }
 
+/// Where the panels sit over the flag, in points, so the flag can draw itself out of focus behind them.
+/// Blurring it in its own shader costs almost nothing; a system blur over a moving picture would be redone every frame.
+enum FlagLayout {
+    nonisolated(unsafe) static var inspector: CGFloat = 0
+    nonisolated(unsafe) static var bottom: CGFloat = 0
+}
+
 struct FlagView: NSViewRepresentable {
     /// The theme and a counter that changes when its picture is replaced.
     let theme: Palette
     let stamp: Int
     let wind: Bool
+    /// The film is playing: the flag moves at half rate and leaves the machine to the sound.
+    var playing = false
 
     func makeCoordinator() -> Renderer { Renderer() }
 
@@ -36,7 +45,7 @@ struct FlagView: NSViewRepresentable {
         let view = MTKView(frame: .zero, device: MTLCreateSystemDefaultDevice())
         view.colorPixelFormat = .bgra8Unorm
         view.framebufferOnly = true
-        view.preferredFramesPerSecond = 60
+        view.preferredFramesPerSecond = 30
         view.autoResizeDrawable = false
         view.clearColor = MTLClearColor(red: 0.027, green: 0.024, blue: 0.063, alpha: 1)
         view.delegate = context.coordinator
@@ -46,12 +55,15 @@ struct FlagView: NSViewRepresentable {
 
     func updateNSView(_ view: MTKView, context: Context) {
         context.coordinator.set(theme: theme, stamp: stamp, wind: wind, in: view)
+        let rate = playing ? 15 : 30
+        if view.preferredFramesPerSecond != rate { view.preferredFramesPerSecond = rate }
     }
 
     final class Renderer: NSObject, MTKViewDelegate {
         private struct Uniforms {
             var aA = SIMD2<Float>(1, 1), aB = SIMD2<Float>(1, 1), res = SIMD2<Float>(1, 1)
-            var mixAB: Float = 1, dimA: Float = 1, dimB: Float = 1, t: Float = 0, wind: Float = 1, pinA: Float = 0, pinB: Float = 0, pad: Float = 0
+            var mixAB: Float = 1, dimA: Float = 1, dimB: Float = 1, t: Float = 0, wind: Float = 1, pinA: Float = 0, pinB: Float = 0
+            var inspector: Float = 0, bottom: Float = 0, pad: Float = 0
         }
         private struct Slot { var texture: MTLTexture?; var w = 1, h = 1; var dim: Float = 1; var pinTop = false; var real = false }
 
@@ -78,6 +90,22 @@ struct FlagView: NSViewRepresentable {
             pipeline = try? device.makeRenderPipelineState(descriptor: d)
             slots[0].texture = ink(device)
             slots[1].texture = ink(device)
+            // Rest whenever nobody is looking, and start again when they are.
+            let nc = NotificationCenter.default
+            for name in [NSApplication.didBecomeActiveNotification, NSWindow.didChangeOcclusionStateNotification, NSWindow.didBecomeKeyNotification,
+                         Notification.Name.NSProcessInfoPowerStateDidChange, ProcessInfo.thermalStateDidChangeNotification] {
+                observers.append(nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.view?.isPaused = false })
+            }
+        }
+        private var observers: [NSObjectProtocol] = []
+        deinit { observers.forEach(NotificationCenter.default.removeObserver) }
+
+        /// The wind only blows when it costs nothing that matters: the app is in front and in view, the Mac is not saving
+        /// power and is not running hot.
+        private var allowed: Bool {
+            let info = ProcessInfo.processInfo
+            return NSApp.isActive && view?.window?.occlusionState.contains(.visible) != false && !info.isLowPowerModeEnabled
+                && info.thermalState != .serious && info.thermalState != .critical
         }
 
         /// One pixel of the theme's own dark, for a theme without a picture.
@@ -98,7 +126,7 @@ struct FlagView: NSViewRepresentable {
                 slots.swapAt(0, 1)
                 var next = Slot(texture: nil, dim: theme.dim, pinTop: theme.pinTop)
                 if let url = Backdrops.picture(for: theme.id), let src = CGImageSourceCreateWithURL(url as CFURL, nil),
-                   let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: 2400] as CFDictionary),
+                   let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: 2048] as CFDictionary),
                    let tex = Self.texture(cg, device) {
                     next.texture = tex; next.w = cg.width; next.h = cg.height; next.real = true
                 } else {
@@ -118,17 +146,23 @@ struct FlagView: NSViewRepresentable {
                                       bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) else { return nil }
             ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
             guard let data = ctx.data else { return nil }
-            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: w, height: h, mipmapped: false)
+            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: w, height: h, mipmapped: true)
             guard let t = device.makeTexture(descriptor: d) else { return nil }
             t.replace(region: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0, withBytes: data, bytesPerRow: w * 4)
+            // Smaller copies of the picture, made once: reading from them is what puts it out of focus behind the panels.
+            if let buffer = device.makeCommandQueue()?.makeCommandBuffer(), let blit = buffer.makeBlitCommandEncoder() {
+                blit.generateMipmaps(for: t)
+                blit.endEncoding()
+                buffer.commit()
+            }
             return t
         }
 
         func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
         func draw(in view: MTKView) {
-            // Drawn at no more than one and a half pixels per point: the picture is soft anyway and it halves the work.
-            let scale = min(view.window?.backingScaleFactor ?? 2, 1.5)
+            // Drawn at one pixel per point: it sits behind smoked glass, and that is a quarter of the work on a Retina screen.
+            let scale: CGFloat = 1
             let want = CGSize(width: max(1, (view.bounds.width * scale).rounded()), height: max(1, (view.bounds.height * scale).rounded()))
             if view.drawableSize != want { view.drawableSize = want }
             guard let pipeline, let queue, let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
@@ -147,6 +181,7 @@ struct FlagView: NSViewRepresentable {
             // Held a little darker than in the QC Reel: here controls sit straight on it, with no pane between.
             u.dimA = slots[0].real ? slots[0].dim * 0.78 : 1; u.dimB = slots[1].real ? slots[1].dim * 0.78 : 1
             u.t = Float(now - t0); u.wind = wind ? 1 : 0
+            u.inspector = Float(FlagLayout.inspector * scale); u.bottom = Float(FlagLayout.bottom * scale)
             u.pinA = slots[0].pinTop ? 1 : 0; u.pinB = slots[1].pinTop ? 1 : 0
             enc.setRenderPipelineState(pipeline)
             enc.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
@@ -157,8 +192,8 @@ struct FlagView: NSViewRepresentable {
             buffer.present(drawable)
             buffer.commit()
             // Keep going while the wind blows on a real picture, or while a crossfade is under way. Otherwise rest.
-            let animate = (wind && slots[0].real) || mix < 1
-            if !animate || view.window?.occlusionState.contains(.visible) == false { view.isPaused = true }
+            let animate = ((wind && slots[0].real) || mix < 1) && allowed
+            if !animate { view.isPaused = true }
         }
 
         /// Wakes the loop when the window comes back into view.
@@ -168,7 +203,7 @@ struct FlagView: NSViewRepresentable {
         #include <metal_stdlib>
         using namespace metal;
         struct V { float4 pos [[position]]; float2 v; };
-        struct U { float2 aA; float2 aB; float2 res; float mixAB; float dimA; float dimB; float t; float wind; float pinA; float pinB; float pad; };
+        struct U { float2 aA; float2 aB; float2 res; float mixAB; float dimA; float dimB; float t; float wind; float pinA; float pinB; float inspector; float bottom; float pad; };
 
         vertex V flag_vertex(uint vid [[vertex_id]]) {
             const float2 p[4] = { float2(-1, -1), float2(1, -1), float2(-1, 1), float2(1, 1) };
@@ -198,22 +233,24 @@ struct FlagView: NSViewRepresentable {
             return float3(d, shade);
         }
 
-        static float3 sampleTheme(texture2d<float> tex, sampler s, float2 v, float2 a, float pin, float dim, float phase, constant U &u) {
+        static float3 sampleTheme(texture2d<float> tex, sampler s, float2 v, float2 a, float pin, float dim, float phase, float pane, constant U &u) {
             float3 c = cloth(v, pin, phase, u.t, u.wind);
             float2 uv = (v - 0.5) * a + 0.5 + c.xy;
             uv = clamp(uv, float2(0.001), float2(0.999));
-            float3 col = tex.sample(s, float2(uv.x, 1.0 - uv.y)).rgb * c.z;
+            // Behind a panel: read a much smaller copy of the picture, which is the picture out of focus, and hold it darker.
+            float3 col = tex.sample(s, float2(uv.x, 1.0 - uv.y), level(pane * 4.6)).rgb * mix(c.z, 1.0 + (c.z - 1.0) * 0.5, pane) * (1.0 - 0.22 * pane);
             float r = length((v - 0.5) * float2(u.res.x / u.res.y, 1.0) * 1.1);
             col *= dim * (1.05 - 0.45 * smoothstep(0.35, 1.15, r));
             return col;
         }
 
         fragment float4 flag_fragment(V in [[stage_in]], constant U &u [[buffer(0)]], texture2d<float> tA [[texture(0)]], texture2d<float> tB [[texture(1)]]) {
-            constexpr sampler s(address::clamp_to_edge, filter::linear);
-            float3 a = sampleTheme(tA, s, in.v, u.aA, u.pinA, u.dimA, 0.0, u);
-            float3 b = u.mixAB < 0.999 ? sampleTheme(tB, s, in.v, u.aB, u.pinB, u.dimB, 2.1, u) : a;
+            constexpr sampler s(address::clamp_to_edge, filter::linear, mip_filter::linear);
+            float pane = (in.pos.x > u.res.x - u.inspector || in.pos.y > u.res.y - u.bottom) ? 1.0 : 0.0;
+            float3 a = sampleTheme(tA, s, in.v, u.aA, u.pinA, u.dimA, 0.0, pane, u);
+            float3 b = u.mixAB < 0.999 ? sampleTheme(tB, s, in.v, u.aB, u.pinB, u.dimB, 2.1, pane, u) : a;
             float3 col = mix(b, a, smoothstep(0.0, 1.0, u.mixAB));
-            col += (hash(in.pos.xy + fract(u.t)) - 0.5) * 0.028;
+            col += (hash(in.pos.xy + fract(u.t)) - 0.5) * 0.028 * (1.0 - pane);
             return float4(col, 1.0);
         }
         """
@@ -225,8 +262,9 @@ struct Backdrop: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("movingBackdrop") private var moving = true
     @AppStorage("backdropStamp") private var stamp = 0
+    @Environment(Store.self) private var store
     var body: some View {
-        FlagView(theme: Theme.current, stamp: stamp, wind: moving && !reduceMotion)
+        FlagView(theme: Theme.current, stamp: stamp, wind: moving && !reduceMotion, playing: store.player.isPlaying)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
     }

@@ -66,7 +66,7 @@ enum Theme {
     }
     static var bg: Color { current.bg }
     /// With a picture hung behind the window the panels are smoked glass, so its movement reads through them.
-    static var panel: Color { Look.shared.glass ? current.panel.opacity(0.6) : current.panel }
+    static var panel: Color { Look.shared.glass ? current.panel.opacity(0.5) : current.panel }
     static var raised: Color { current.ink.opacity(0.06) }
     static var lane: Color { current.ink.opacity(0.028) }
     static var line: Color { current.ink.opacity(0.08) }
@@ -96,12 +96,19 @@ struct ThemePicker: View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 8)], spacing: 8) {
             ForEach(Palette.all) { p in
                 let on = store.theme == p.id
-                Button { store.theme = p.id } label: {
+                Button { store.theme = p.id; store.say("Backdrop · \(p.name)") } label: {
                     VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 0) {
-                            ForEach(Array(([p.bg, p.panel] + p.glow + [p.accent]).enumerated()), id: \.offset) { _, c in c }
+                        ZStack {
+                            if let thumb = ThemeThumbs.image(for: p.id, stamp: stamp) {
+                                Image(nsImage: thumb).resizable().aspectRatio(contentMode: .fill)
+                            } else {
+                                HStack(spacing: 0) {
+                                    ForEach(Array(([p.bg, p.panel] + p.glow + [p.accent]).enumerated()), id: \.offset) { _, c in c }
+                                }
+                            }
                         }
-                        .frame(height: 22)
+                        .frame(height: 54)
+                        .frame(maxWidth: .infinity)
                         .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
                         Text(p.name).font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
                         Text(p.about).font(.system(size: 10.5)).foregroundStyle(Theme.secondary).lineLimit(2).multilineTextAlignment(.leading)
@@ -162,5 +169,20 @@ struct HintBox: View {
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: text)
         .allowsHitTesting(false)
+    }
+}
+
+
+/// Small copies of the theme pictures for the picker, read once each.
+enum ThemeThumbs {
+    nonisolated(unsafe) private static var cache: [String: NSImage] = [:]
+    static func image(for theme: String, stamp: Int) -> NSImage? {
+        let key = "\(theme)-\(stamp)"
+        if let have = cache[key] { return have }
+        guard let url = Backdrops.picture(for: theme), let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: 320] as CFDictionary) else { return nil }
+        let image = NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+        cache[key] = image
+        return image
     }
 }

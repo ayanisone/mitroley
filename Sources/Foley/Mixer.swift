@@ -186,7 +186,8 @@ private func stripOuter(_ w: CGFloat, compact: Bool) -> CGFloat {
         }
         rests = rests.filter { bodies[$0.key] != nil }
         tick &+= 1
-        if !moving && pointer == nil { timer?.invalidate(); timer = nil }
+        // Settled, even with the pointer resting on it: stop the clock until something changes.
+        if !moving { timer?.invalidate(); timer = nil }
     }
 
     func forget(_ key: String) { bodies[key] = nil; rests[key] = nil }
