@@ -69,6 +69,8 @@ final class Library {
     /// The keys go to the browser while it is open and the pointer was last pressed inside it.
     @ObservationIgnored var hovered = false
     @ObservationIgnored var active = false
+    /// The sound being dragged out of the browser, so the timeline can draw it at its real length.
+    var dragged: SoundItem?
 
     /// Steps the selection up or down the list. Returns the sound it landed on.
     func step(_ by: Int) -> SoundItem? {
@@ -563,7 +565,15 @@ private struct LibraryRow: View {
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { store.place(item) }
         .onTapGesture { pick(); store.audition(path: item.path) }
-        .onDrag { NSItemProvider(object: item.url as NSURL) }
+        .onDrag {
+            store.library.dragged = item
+            return NSItemProvider(object: item.url as NSURL)
+        } preview: {
+            // A small tag under the pointer, so it does not hide the place it is being dropped on.
+            Text(item.name).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.white).lineLimit(1)
+                .padding(.horizontal, 9).frame(height: 22)
+                .background(Theme.accent.opacity(0.9), in: Capsule())
+        }
         .contextMenu {
             Button("Place at the Playhead") { store.place(item) }
             Button("Find Sounds Shaped Like This") { like() }

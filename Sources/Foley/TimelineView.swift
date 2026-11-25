@@ -787,12 +787,12 @@ struct TrackLane: View {
     @Environment(Store.self) private var store
     let track: Track
     let pps: Double
-    @State private var targeted = false
+    @State private var dropAt: Double?
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             Rectangle()
-                .fill(targeted || store.dropTrack == track.id ? track.kind.color.opacity(0.12) : (store.selection == .track(track.id) ? Color.white.opacity(0.045) : Theme.lane))
+                .fill(store.dropTrack == track.id ? track.kind.color.opacity(0.12) : dropAt != nil ? track.kind.color.opacity(0.05) : (store.selection == .track(track.id) ? Color.white.opacity(0.045) : Theme.lane))
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0)
                     .onChanged { g in
@@ -844,18 +844,28 @@ struct TrackLane: View {
         }
         .frame(height: store.rowHeight(track))
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
-        .dropDestination(for: URL.self) { urls, location in
-            var t = max(0, Double(location.x) / pps)
-            var any = false
-            for url in urls where ["wav", "mp3", "m4a", "aif", "aiff", "caf", "flac"].contains(url.pathExtension.lowercased()) {
-                if let id = store.importAudio(url, track: track.id, at: t), let l = store.project.locate(clip: id) {
-                    t += store.project.tracks[l.track].clips[l.clip].duration
-                    store.selection = .clip(id)
-                    any = true
+        // Where a dragged sound will land: its own length drawn at the pointer, with the time it starts at.
+        .overlay(alignment: .topLeading) {
+            if let t = dropAt {
+                let length = store.library.dragged?.duration
+                ZStack(alignment: .topLeading) {
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(track.kind.color.opacity(0.28))
+                        .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(track.kind.color, lineWidth: 1.5))
+                        .frame(width: max(3, CGFloat((length ?? 0) * pps)))
+                        .padding(.vertical, 3)
+                    Text(timecode(t, fps: store.project.fps))
+                        .font(.system(size: 10.5, weight: .semibold).monospacedDigit()).foregroundStyle(.white)
+                        .padding(.horizontal, 5).frame(height: 16)
+                        .background(Color.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                        .fixedSize()
+                        .offset(x: 5, y: 6)
                 }
+                .offset(x: CGFloat(t * pps))
+                .allowsHitTesting(false)
             }
-            return any
-        } isTargeted: { targeted = $0 }
+        }
+        .onDrop(of: [.fileURL], delegate: LaneDrop(store: store, track: track.id, pps: pps, at: $dropAt))
     }
 }
 
@@ -1524,5 +1534,48 @@ struct AutomationLane: View {
         .frame(height: Metrics.lane)
         .coordinateSpace(name: "lane-\(track.id)-\(param.rawValue)")
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
+    }
+}
+
+
+/// A sound file dragged over a lane, from the library or from Finder. Follows the pointer so the lane can show where it will land.
+struct LaneDrop: DropDelegate {
+    let store: Store
+    let track: UUID
+    let pps: Double
+    @Binding var at: Double?
+
+    /// The start time under the pointer. Within 7 pt of the playhead it lands exactly on it.
+    private func time(_ info: DropInfo) -> Double {
+        let t = max(0, Double(info.location.x) / pps)
+        return abs(t - store.player.time) * pps < 7 ? store.player.time : t
+    }
+    func validateDrop(info: DropInfo) -> Bool { info.hasItemsConforming(to: [.fileURL]) }
+    func dropEntered(info: DropInfo) { at = time(info) }
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        let t = time(info)
+        if t != at { at = t }
+        return DropProposal(operation: .copy)
+    }
+    func dropExited(info: DropInfo) { at = nil }
+    func performDrop(info: DropInfo) -> Bool {
+        let start = time(info)
+        at = nil
+        store.library.dragged = nil
+        let providers = info.itemProviders(for: [.fileURL])
+        guard !providers.isEmpty else { return false }
+        Task { @MainActor in
+            var t = start
+            for p in providers {
+                let url: URL? = await withCheckedContinuation { done in
+                    _ = p.loadObject(ofClass: URL.self) { u, _ in done.resume(returning: u) }
+                }
+                guard let url, ["wav", "mp3", "m4a", "aif", "aiff", "caf", "flac"].contains(url.pathExtension.lowercased()),
+                      let id = store.importAudio(url, track: track, at: t), let l = store.project.locate(clip: id) else { continue }
+                t += store.project.tracks[l.track].clips[l.clip].duration
+                store.selection = .clip(id)
+            }
+        }
+        return true
     }
 }
