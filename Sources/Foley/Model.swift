@@ -475,7 +475,10 @@ struct Project: Codable, Equatable {
     var duration = 30.0
     /// How far the timeline runs: the film, or the end of the last clip when sound carries on past the picture.
     /// How far the timeline can be scrolled and worked in: past the last sound, with room to put more after it.
-    var reach: Double { extent + max(20, duration * 0.5) }
+    var reach: Double { max(extent + max(20, duration * 0.5), Project.viewFloor) }
+    /// How many seconds the timeline's own width shows at the present zoom. The timeline is never shorter than what is on
+    /// screen, so the grid, ruler and lanes always run to the right-hand edge.
+    nonisolated(unsafe) static var viewFloor = 0.0
     var extent: Double { max(duration, tracks.reduce(0) { m, t in max(m, t.clips.reduce(0) { max($0, $1.start + $1.duration) }) }) }
     var video: VideoRef?
     var videoVolume = 0.0           // 0…1, the video's own soundtrack

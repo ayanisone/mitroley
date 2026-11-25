@@ -93,6 +93,8 @@ struct TimelineHost: NSViewRepresentable {
     let scroll: TimelineScroll
     let pps: Double
     let contentWidth: CGFloat
+    /// During a pinch the one-pass drawing stands in for the lanes and the ruler strip; the track names stay.
+    var standIn = false
     let onPinch: (CGFloat, CGFloat, Bool, Bool) -> Void
 
     final class Coordinator: NSObject {
@@ -232,6 +234,8 @@ struct TimelineHost: NSViewRepresentable {
             c.stale = true
         }
         v.onPinch = onPinch
+        let alpha: CGFloat = standIn ? 0 : 1
+        if c.lanes.alphaValue != alpha { c.lanes.alphaValue = alpha; c.pinned.alphaValue = alpha }
         c.layout()
         // Row heights can change without this view being told (track height); settle once more after SwiftUI has.
         if c.stale || c.lanesHeight == 0 { DispatchQueue.main.async { c.stale = true; c.layout() } }

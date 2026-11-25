@@ -19,17 +19,16 @@ struct TimelineView: View {
             // the side panel is being resized it keeps its scale, and is fitted once when the resizing stops.
             let fit = fitWidth > 0 ? fitWidth : visible
             let pps = Double(fit - 24) / duration * store.zoom
+            let _ = { Project.viewFloor = Double(fit) / pps }()
             let contentWidth = CGFloat(store.project.reach * pps) + 24
             let pinned = Metrics.ruler + Metrics.film + Metrics.scene
             let rows = store.project.rows.count + store.project.tracks.reduce(0) { $0 + ($1.lane == nil ? 0 : 1) }
             ZStack(alignment: .topLeading) {
                 // One native scroll view for both directions. The ruler strip and the track names float in it.
-                TimelineHost(store: store, scroll: scroll, pps: pps, contentWidth: contentWidth) { total, x, option, ended in
+                TimelineHost(store: store, scroll: scroll, pps: pps, contentWidth: contentWidth, standIn: live.active) { total, x, option, ended in
                     pinched(total: total, at: x, option: option, ended: ended, pps: pps, visible: fit, duration: duration)
                 }
                 .clipped()
-                // During a pinch the one-pass drawing stands in for this; hidden, so it cannot show through it.
-                .opacity(live.active ? 0 : 1)
                 TimelineCorner()
                     .frame(width: Metrics.header, height: pinned)
                     .background { GlassCover() }

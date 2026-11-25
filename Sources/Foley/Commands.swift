@@ -588,6 +588,11 @@ final class Commands {
             return CommandResult(json: ["steps": steps, "per_second": Double(steps) / seconds, "worst_ms": worst * 1000, "steps_over_20ms": slow])
         case "debug_scroll":
             // Not listed as a tool: zooms in, scrolls the timeline sideways for a few seconds and reports how often the main thread got a turn.
+            if let to = a.num("to"), let sv = Self.timelineScrollView() {
+                sv.contentView.scroll(to: NSPoint(x: to, y: sv.contentView.bounds.origin.y))
+                sv.reflectScrolledClipView(sv.contentView)
+                return CommandResult(json: ["x": Double(sv.contentView.bounds.origin.x), "content_width": Double(sv.documentView?.frame.width ?? 0)])
+            }
             let seconds = a.num("seconds") ?? 5
             let before = store.zoom
             store.zoom = a.num("zoom") ?? 6
