@@ -186,7 +186,7 @@ private struct ToolColumn: View {
                 .offset(x: -cell * 0.06, y: y - cell * 0.56)
                 .frame(width: cell, alignment: .leading)
                 .allowsHitTesting(false)
-                .animation(drag == nil ? (reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.34, dampingFraction: 0.72)) : nil, value: y)
+                .animation(drag == nil ? (reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.42, dampingFraction: 0.78)) : nil, value: y)
                 .animation(.spring(response: 0.25, dampingFraction: 0.8), value: pressed)
                 .animation(.spring(response: 0.3, dampingFraction: 0.75), value: stretch)
         }
@@ -196,15 +196,22 @@ private struct ToolColumn: View {
         .gesture(DragGesture(minimumDistance: 0)
             .onChanged { g in
                 pressed = true
+                let now = index(at: min(last, max(cell / 2, g.location.y)))
+                if drag == nil, abs(g.translation.height) < 4 {
+                    // A press: choose the tool and let the selector glide to it from wherever it was.
+                    if tools[now] != store.tool { store.tool = tools[now] }
+                    return
+                }
+                // A drag: the selector is in the hand now.
                 drag = g.location.y
                 speed = g.velocity.height
-                let now = index(at: min(last, max(cell / 2, g.location.y)))
-                if tools[now] != store.tool, abs(g.translation.height) < 3 { store.tool = tools[now] }
             }
             .onEnded { g in
                 // Where a flick would carry it, not just where it was let go.
-                let landing = g.location.y + g.velocity.height * 0.06
-                store.tool = tools[index(at: min(last, max(cell / 2, landing)))]
+                if drag != nil {
+                    let landing = g.location.y + g.velocity.height * 0.06
+                    store.tool = tools[index(at: min(last, max(cell / 2, landing)))]
+                }
                 speed = 0
                 pressed = false
                 drag = nil

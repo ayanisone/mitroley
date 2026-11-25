@@ -57,6 +57,9 @@ enum Theme {
         var palette = Palette.named(UserDefaults.standard.string(forKey: "theme")) { didSet { refresh() } }
         /// True while the theme has a picture behind the window.
         var glass = false
+        /// How sliders are coloured: "gradient" (the track's colour, fading in), "accent" (the theme's colour, fading in)
+        /// or "classic" (the flat colour and white knob they had before).
+        var controls = UserDefaults.standard.string(forKey: "controlLook") ?? "gradient" { didSet { UserDefaults.standard.set(controls, forKey: "controlLook") } }
         init() { refresh() }
         func refresh() { glass = Backdrops.picture(for: palette.id) != nil }
     }

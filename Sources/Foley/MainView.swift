@@ -7,7 +7,7 @@ struct MainView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var timelineHeight: CGFloat = 380
     @State private var dragStart: CGFloat?
-    @AppStorage("dockHeight") private var dockHeight = 320.0
+    @AppStorage("dockHeight") private var dockHeight = 360.0
     @State private var dockStart: CGFloat?
 
     var body: some View {
@@ -199,6 +199,8 @@ struct VideoPane: View {
 
     var body: some View {
         ZStack {
+            // Fills the pane whatever is in it, so the tools and transport keep their places when the picture is out.
+            Color.clear
             if store.project.video != nil, store.pictureOut {
                 VStack(spacing: 10) {
                     Image(systemName: "macwindow.on.rectangle").font(.system(size: 26, weight: .light)).foregroundStyle(Theme.tertiary)
@@ -427,6 +429,7 @@ struct Timecode: View {
 /// The mixer or the library, docked under the timeline. Either can be moved out into a window of its own.
 struct DockPanel: View {
     @Environment(Store.self) private var store
+    @AppStorage("mixerStyle") private var mixerStyle = "console"
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -435,6 +438,15 @@ struct DockPanel: View {
             HStack(spacing: 10) {
                 SegmentedPill(options: [(value: "mixer", label: "Mixer"), (value: "library", label: "Library")], selection: which, segmentWidth: 70, height: 24, size: 11.5) { store.dock = $0 }
                 Spacer()
+                if which == "mixer" {
+                    Button { mixerStyle = mixerStyle == "console" ? "classic" : "console" } label: {
+                        Text(mixerStyle == "console" ? "Console" : "Cards").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.secondary)
+                            .padding(.horizontal, 8).frame(height: 22)
+                            .background(Theme.raised, in: Capsule()).contentShape(Capsule())
+                    }
+                    .buttonStyle(PressStyle(scale: 0.96))
+                    .hint("The mixer's look: a console of narrow strips, or the rounded cards it had before. Click to switch.")
+                }
                 Button { openWindow(id: which); store.dock = nil } label: {
                     Image(systemName: "macwindow.on.rectangle").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.secondary).frame(width: 26, height: 24).contentShape(Rectangle())
                 }

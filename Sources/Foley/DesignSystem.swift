@@ -227,17 +227,30 @@ struct Slide: View {
     }
 
     var body: some View {
+        let look = Theme.Look.shared.controls
         GeometryReader { geo in
             let w = geo.size.width, u = unit(value)
             let x = u * (w - knob)
             ZStack(alignment: .leading) {
-                Capsule().fill(Color.white.opacity(0.1)).frame(height: 3)
-                Capsule().fill(tint.opacity(0.9)).frame(width: x + knob / 2, height: 3)
+                if look == "classic" {
+                    Capsule().fill(Color.white.opacity(0.1)).frame(height: 3)
+                    Capsule().fill(tint.opacity(0.9)).frame(width: x + knob / 2, height: 3)
+                } else {
+                    // A groove cut into the panel, and the colour fading in along it instead of one flat bar.
+                    let colour = look == "accent" ? Theme.accent : tint
+                    Capsule().fill(Color.black.opacity(0.38)).frame(height: 4)
+                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.07), lineWidth: 0.5))
+                    Capsule()
+                        .fill(LinearGradient(colors: [colour.opacity(0.12), colour.opacity(dragging ? 0.95 : 0.7)], startPoint: .leading, endPoint: .trailing))
+                        .frame(width: x + knob / 2, height: 4)
+                }
                 Circle()
-                    .fill(Color.white)
+                    .fill(look == "classic" ? AnyShapeStyle(Color.white)
+                                            : AnyShapeStyle(LinearGradient(colors: [Color(white: 0.96), Color(white: 0.66)], startPoint: .top, endPoint: .bottom)))
+                    .overlay(Circle().strokeBorder(Color.black.opacity(look == "classic" ? 0 : 0.35), lineWidth: 0.5))
                     .frame(width: knob, height: knob)
-                    .scaleEffect(dragging ? 1.2 : 1)
-                    .shadow(color: .black.opacity(0.4), radius: 2, y: 1)
+                    .scaleEffect(dragging ? 1.15 : 1)
+                    .shadow(color: .black.opacity(0.45), radius: 2, y: 1)
                     // The value, riding just under the knob while it is held, clear of the track's name.
                     .overlay(alignment: .bottom) {
                         if dragging, let label {

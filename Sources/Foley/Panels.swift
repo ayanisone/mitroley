@@ -396,6 +396,7 @@ struct SettingsSheet: View {
     @AppStorage("startupSound") private var startupSound = true
     @AppStorage("motionLevel") private var motionLevel = MotionLevel.auto.rawValue
     @AppStorage("hintBox") private var hintBox = true
+    @AppStorage("mixerStyle") private var mixerStyle = "console"
     @AppStorage("backdropPointer") private var backdropPointer = true
     @AppStorage("voiceAgentVoice") private var helperVoice = ""
     @AppStorage("voiceAgentVoiceName") private var helperVoiceName = ""
@@ -485,6 +486,15 @@ struct SettingsSheet: View {
                 .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
             Text("Theme").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.secondary)
             ThemePicker()
+            Picker("Sliders", selection: Binding(get: { Theme.Look.shared.controls }, set: { Theme.Look.shared.controls = $0 })) {
+                Text("Track colour, fading in").tag("gradient")
+                Text("Theme colour, fading in").tag("accent")
+                Text("Flat colour (as before)").tag("classic")
+            }
+            Picker("Mixer", selection: $mixerStyle) {
+                Text("Console").tag("console")
+                Text("Cards (as before)").tag("classic")
+            }
             Picker("Motion", selection: $motionLevel) {
                 ForEach(MotionLevel.allCases) { m in Text(m.title).tag(m.rawValue) }
             }

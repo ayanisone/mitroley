@@ -75,7 +75,7 @@ struct ZoomPreview: View {
             step *= Double(every)
             let major = max(1, Int((1 / step).rounded()))
             var i = max(0, Int((Double(x0) / pps / step).rounded(.down)))
-            while Double(i) * step <= p.duration + 0.0001 {
+            while Double(i) * step <= p.reach + 0.0001 {
                 let gx = x(Double(i) * step)
                 if gx > size.width { break }
                 lanes.fill(Path(CGRect(x: gx, y: pinned, width: 1, height: size.height - pinned)),
@@ -112,6 +112,9 @@ struct ZoomPreview: View {
         for clip in track.clips {
             let cx = x(clip.start), w = max(4, CGFloat(clip.duration * pps)), h = height - 8
             guard cx + w > 0 && cx < size.width else { continue }
+            // A muted clip is as dim here as it is on the real timeline, so it does not brighten while you pinch.
+            var ctx = ctx
+            if clip.muted == true { ctx.opacity = 0.32 }
             let rect = CGRect(x: cx, y: top + 4, width: w, height: h)
             let shape = Path(roundedRect: rect, cornerRadius: 6, style: .continuous)
             let selected = store.selection == .clip(clip.id)
@@ -195,7 +198,7 @@ struct ZoomPreview: View {
             ctx.fill(Path(CGRect(x: band.minX, y: 0, width: band.width, height: 2)), with: .color(Theme.accent.opacity(on ? 1 : 0.4)))
         }
         var t = max(0, (Double(x0) / pps / step).rounded(.down) - 1) * step
-        while t <= p.duration + 0.001 {
+        while t <= p.reach + 0.001 {
             let tx = CGFloat(t * pps) - x0
             if tx > size.width { break }
             ctx.fill(Path(CGRect(x: tx, y: h - 7, width: 1, height: 7)), with: .color(.white.opacity(0.25)))

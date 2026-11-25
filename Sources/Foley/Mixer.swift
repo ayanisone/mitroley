@@ -8,11 +8,17 @@ struct MixerView: View {
     @Environment(Store.self) private var store
     /// Inside the main window: no footer, and it takes whatever height it is given.
     var docked = false
+    @AppStorage("mixerStyle") private var style = "console"
 
     var body: some View {
+        if style == "console" { ConsoleMixer(docked: docked) } else { cards }
+    }
+
+    /// The mixer as rounded cards, as it was before the console.
+    private var cards: some View {
         let p = store.project
         let buses = p.groups ?? []
-        VStack(spacing: 0) {
+        return VStack(spacing: 0) {
             if p.tracks.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "slider.vertical.3").font(.system(size: 26)).foregroundStyle(Theme.tertiary)
@@ -198,9 +204,11 @@ private func stripOuter(_ w: CGFloat, compact: Bool) -> CGFloat {
 /// The patch bay under the strips: a socket under every strip, and a cable from each track to where it plays into.
 /// Drag from a track's socket to a bus's or the master's to send it there. Drag onto another track to sidechain: that track
 /// then dips while this one is heard (drag the same way again to undo). Solid cables carry sound; dashed ones are sidechains.
-private struct Cables: View {
+struct Cables: View {
     @Environment(Store.self) private var store
     let compact: Bool
+    /// Laid out under the console's strips instead of the cards.
+    var console = false
     @State private var sim = CableSim()
     /// A cable being dragged: the socket it comes from and where the pointer has it.
     @State private var pulling: (from: Int, at: CGPoint)?
@@ -209,19 +217,24 @@ private struct Cables: View {
 
     private struct Port { let x: CGFloat; let track: UUID?; let bus: UUID?; let master: Bool }
     private static let top: CGFloat = 7
-    private static let height: CGFloat = 66
+    private var height: CGFloat { console && compact ? 46 : 66 }
+    /// Strip width, the gap between strips, the extra step at a divider, and the master's width.
+    private var geometry: (w: CGFloat, gap: CGFloat, divider: CGFloat, master: CGFloat) {
+        console ? (ConsoleMetrics.strip, 0, ConsoleMetrics.divider, ConsoleMetrics.master)
+                : (stripOuter(stripWidth, compact: compact), 8, 9, stripOuter(stripWidth + 12, compact: compact))
+    }
 
     private var ports: [Port] {
         let p = store.project
-        let w = stripOuter(stripWidth, compact: compact)
+        let g = geometry
         var x: CGFloat = 0, out: [Port] = []
-        for t in p.tracks { out.append(Port(x: x + w / 2, track: t.id, bus: nil, master: false)); x += w + 8 }
-        if let g = p.groups, !g.isEmpty {
-            x += 9
-            for b in g { out.append(Port(x: x + w / 2, track: nil, bus: b.id, master: false)); x += w + 8 }
+        for t in p.tracks { out.append(Port(x: x + g.w / 2, track: t.id, bus: nil, master: false)); x += g.w + g.gap }
+        if let groups = p.groups, !groups.isEmpty {
+            x += g.divider
+            for b in groups { out.append(Port(x: x + g.w / 2, track: nil, bus: b.id, master: false)); x += g.w + g.gap }
         }
-        x += 9
-        out.append(Port(x: x + stripOuter(stripWidth + 12, compact: compact) / 2, track: nil, bus: nil, master: true))
+        x += g.divider
+        out.append(Port(x: x + g.master / 2, track: nil, bus: nil, master: true))
         return out
     }
 
@@ -233,8 +246,10 @@ private struct Cables: View {
     var body: some View {
         let p = store.project
         let ports = self.ports
-        let width = (ports.last?.x ?? 0) + stripOuter(stripWidth + 12, compact: compact) / 2
+        let width = (ports.last?.x ?? 0) + geometry.master / 2
         var selected: UUID? { if case .track(let id) = store.selection { return id } else { return nil } }
+        // With nothing selected every cable is shown quietly; select a track and its cables stand out from the rest.
+        let quiet = selected == nil && pulling == nil
         let target = pulling.flatMap { pull in nearest(ports, to: pull.at.x).flatMap { $0 == pull.from ? nil : $0 } }
         Canvas { ctx, size in
             _ = sim.tick
@@ -249,10 +264,6 @@ private struct Cables: View {
                 var path = Path()
                 path.move(to: a)
                 switch shape {
-                case 1:
-                    // Taut: two straight runs meeting at the weight.
-                    path.addLine(to: m)
-                    path.addLine(to: b)
                 case 2:
                     // Stepped: down, across and up, with rounded corners, like a circuit trace.
                     let r = min(7, abs(b.x - a.x) / 2, max(1, m.y - a.y))
@@ -263,13 +274,15 @@ private struct Cables: View {
                     // Hanging: a curve that passes through the weight.
                     path.addQuadCurve(to: b, control: CGPoint(x: 2 * m.x - (a.x + b.x) / 2, y: 2 * m.y - (a.y + b.y) / 2))
                 }
-                ctx.stroke(path, with: .color(.black.opacity(strong ? 0.35 : 0.15)), style: StrokeStyle(lineWidth: strong ? 4.5 : 3, lineCap: .round))
-                ctx.stroke(path, with: .color(color.opacity(strong ? 0.95 : 0.32)),
-                           style: StrokeStyle(lineWidth: strong ? 2.2 : 1.5, lineCap: .round, dash: dashed ? [5, 4] : []))
+                let lit = strong && !quiet
+                // Fine lines, as on a patch diagram: only the cable in question is bright, and only it casts a shadow.
+                if lit { ctx.stroke(path, with: .color(.black.opacity(0.4)), style: StrokeStyle(lineWidth: 3.6, lineCap: .round)) }
+                ctx.stroke(path, with: .color(color.opacity(lit ? 0.95 : (strong ? 0.42 : 0.13))),
+                           style: StrokeStyle(lineWidth: lit ? 1.7 : 1.1, lineCap: .round, lineJoin: .round, dash: dashed ? [5, 4] : []))
                 if dashed {
                     var head = Path()
                     head.move(to: CGPoint(x: b.x, y: b.y + 2)); head.addLine(to: CGPoint(x: b.x - 4, y: b.y + 10)); head.addLine(to: CGPoint(x: b.x + 4, y: b.y + 10)); head.closeSubpath()
-                    ctx.fill(head, with: .color(color.opacity(strong ? 0.95 : 0.4)))
+                    ctx.fill(head, with: .color(color.opacity(strong && !quiet ? 0.95 : (strong ? 0.5 : 0.18))))
                 }
             }
             func at(_ x: CGFloat) -> CGPoint { CGPoint(x: x, y: top) }
@@ -300,7 +313,7 @@ private struct Cables: View {
                 ctx.stroke(Path(ellipseIn: rect), with: .color(lit ? Theme.accent : Color.white.opacity(port.track == nil ? 0.8 : 0.5)), lineWidth: target == i ? 2 : 1.5)
             }
         }
-        .frame(width: width, height: Self.height)
+        .frame(width: width, height: height)
         .contentShape(Rectangle())
         .onContinuousHover { phase in
             switch phase {
@@ -390,7 +403,6 @@ private struct Cables: View {
         }
         Picker("Cable Shape", selection: $shape) {
             Text("Hanging").tag(0)
-            Text("Taut").tag(1)
             Text("Stepped").tag(2)
         }
     }
@@ -611,7 +623,7 @@ private struct MasterStrip: View {
 }
 
 /// The room panner for one track: where it sits around and above the listener.
-private struct RoomPanel: View {
+struct RoomPanel: View {
     @Environment(Store.self) private var store
     let track: Track
     var body: some View {
@@ -646,7 +658,7 @@ private struct RoomPanel: View {
 }
 
 /// Sidechain for one track: what it listens to, how far it dips, and the finer way that lowers only the clashing frequencies.
-private struct DuckPanel: View {
+struct DuckPanel: View {
     @Environment(Store.self) private var store
     let track: Track
     @State private var carve = 9.0
@@ -730,7 +742,7 @@ private struct DuckPanel: View {
 }
 
 /// A vertical fader, -48 to +12 dB, with more travel around 0 where it matters.
-private struct Fader: View {
+struct Fader: View {
     let value: Double
     var tint: Color
     let begin: () -> Void
