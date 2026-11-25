@@ -54,7 +54,7 @@ struct PinnedRoot: View {
             PlayheadView(pps: pps, handle: true)
         }
         .frame(width: contentWidth, height: Metrics.ruler + Metrics.film + Metrics.scene, alignment: .topLeading)
-        .background(Theme.panel)
+        .background { GlassCover() }
     }
 }
 
@@ -66,7 +66,7 @@ struct HeadersRoot: View {
             Rectangle().fill(Theme.line).frame(width: 1)
         }
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(Theme.panel)
+        .background { GlassCover() }
     }
 }
 
@@ -175,8 +175,8 @@ struct TimelineHost: NSViewRepresentable {
         v.hasVerticalScroller = true
         v.autohidesScrollers = true
         v.scrollerStyle = .overlay
-        v.drawsBackground = true
-        v.backgroundColor = NSColor(Theme.panel)
+        // No fill of its own: the lanes bring their own, and a colour fixed here would not follow the theme.
+        v.drawsBackground = false
         v.allowsMagnification = false
         v.usesPredominantAxisScrolling = false
         // Views do not clip by default; without this the floating track names show outside the timeline.

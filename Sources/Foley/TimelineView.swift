@@ -28,9 +28,11 @@ struct TimelineView: View {
                     pinched(total: total, at: x, option: option, ended: ended, pps: pps, visible: fit, duration: duration)
                 }
                 .clipped()
+                // During a pinch the one-pass drawing stands in for this; hidden, so it cannot show through it.
+                .opacity(live.active ? 0 : 1)
                 TimelineCorner()
                     .frame(width: Metrics.header, height: pinned)
-                    .background(Theme.panel)
+                    .background { GlassCover() }
                     .overlay(alignment: .trailing) { Rectangle().fill(Theme.line).frame(width: 1).offset(x: 1) }
             }
             .onChange(of: store.vzoom) { _, _ in store.relayoutTimeline?() }

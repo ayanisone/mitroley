@@ -186,3 +186,30 @@ enum ThemeThumbs {
         return image
     }
 }
+
+
+/// What the timeline's pinned strips sit on. With a picture behind the window it is frosted glass: whatever scrolls under it
+/// is blurred out of recognition and tinted with the panel colour. Without one it is the plain panel, which costs nothing.
+struct GlassCover: View {
+    var body: some View {
+        if Theme.Look.shared.glass {
+            ZStack {
+                Frost()
+                Theme.current.panel.opacity(0.62)
+            }
+        } else {
+            Theme.panel
+        }
+    }
+    private struct Frost: NSViewRepresentable {
+        func makeNSView(context: Context) -> NSVisualEffectView {
+            let v = NSVisualEffectView()
+            v.blendingMode = .withinWindow
+            v.material = .hudWindow
+            v.state = .active
+            v.appearance = NSAppearance(named: .darkAqua)
+            return v
+        }
+        func updateNSView(_ v: NSVisualEffectView, context: Context) {}
+    }
+}

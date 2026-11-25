@@ -45,7 +45,7 @@ struct FlagView: NSViewRepresentable {
         let view = MTKView(frame: .zero, device: MTLCreateSystemDefaultDevice())
         view.colorPixelFormat = .bgra8Unorm
         view.framebufferOnly = true
-        view.preferredFramesPerSecond = 30
+        view.preferredFramesPerSecond = 60
         view.autoResizeDrawable = false
         view.clearColor = MTLClearColor(red: 0.027, green: 0.024, blue: 0.063, alpha: 1)
         view.delegate = context.coordinator
@@ -55,8 +55,7 @@ struct FlagView: NSViewRepresentable {
 
     func updateNSView(_ view: MTKView, context: Context) {
         context.coordinator.set(theme: theme, stamp: stamp, wind: wind, in: view)
-        let rate = playing ? 15 : 30
-        if view.preferredFramesPerSecond != rate { view.preferredFramesPerSecond = rate }
+        if view.preferredFramesPerSecond != 60 { view.preferredFramesPerSecond = 60 }
     }
 
     final class Renderer: NSObject, MTKViewDelegate {
@@ -100,11 +99,11 @@ struct FlagView: NSViewRepresentable {
         private var observers: [NSObjectProtocol] = []
         deinit { observers.forEach(NotificationCenter.default.removeObserver) }
 
-        /// The wind only blows when it costs nothing that matters: the app is in front and in view, the Mac is not saving
+        /// The wind blows whenever the window can be seen, in front or not, unless the Mac is saving
         /// power and is not running hot.
         private var allowed: Bool {
             let info = ProcessInfo.processInfo
-            return NSApp.isActive && view?.window?.occlusionState.contains(.visible) != false && !info.isLowPowerModeEnabled
+            return view?.window?.occlusionState.contains(.visible) != false && !info.isLowPowerModeEnabled
                 && info.thermalState != .serious && info.thermalState != .critical
         }
 
