@@ -116,7 +116,6 @@ struct MainView: View {
         .sheet(isPresented: $store.showCutCheck) { CutCheckSheet().environment(store) }
         .overlay(alignment: .bottom) { CrashBar() }
         .overlay(alignment: .bottomLeading) { HintBox() }
-        .overlay { LicenseGate() }
         .overlay { Splash() }
         .sheet(isPresented: $store.showSettings) { SettingsSheet().environment(store) }
         // Icons only, and no "Icon and Text" choice to fall into: it also overrides a mode saved by an earlier launch.
