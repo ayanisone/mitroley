@@ -484,7 +484,7 @@ struct SettingsSheet: View {
                 .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
             Text("Theme").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.secondary)
             ThemePicker()
-            Toggle("Wind through the picture behind the film", isOn: $movingBackdrop)
+            Toggle("Wind in the picture behind the window", isOn: $movingBackdrop)
                 .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
             Toggle("Hint box in the corner: says what the pointer is on", isOn: $hintBox)
                 .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))

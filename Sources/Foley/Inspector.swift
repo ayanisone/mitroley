@@ -235,6 +235,12 @@ struct ClipPanel: View {
         }
         }
 
+        if clip.take != nil {
+            SectionTitle("Stems")
+            Button("Split into Stems…") { Panels.clipStems(store, clip.id) }.buttonStyle(PillButtonStyle())
+            Caption("ElevenLabs pulls this sound apart into voice, drums, bass, guitar, piano and other, each on its own track at the same place. Made for music. It uses credits.")
+        }
+
         SectionTitle("Level and shape")
         Field(title: "Gain", value: String(format: "%+.1f dB", clip.gain)) { slide(\.gain, -24...12, reset: 0) }
         Field(title: "Speed", value: String(format: "%.2f×", clip.speed)) {

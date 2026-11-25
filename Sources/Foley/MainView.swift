@@ -17,7 +17,7 @@ struct MainView: View {
                 // The dock under the timeline takes its height first; the picture always keeps at least 160 pt.
                 // With the dock open the timeline may go down to 150 pt, so the picture keeps 230.
                 let least: CGFloat = store.dock == nil ? 180 : 150
-                let dock = store.dock == nil ? 0 : min(max(300, CGFloat(dockHeight)), max(300, geo.size.height - 230 - least))
+                let dock = store.dock == nil ? 0 : min(max(326, CGFloat(dockHeight)), max(326, geo.size.height - 230 - least))
                 let maxTimeline = max(least, geo.size.height - (dock > 0 ? 230 : 220) - dock)
                 let tl = min(maxTimeline, max(least, timelineHeight))
                 VStack(spacing: 0) {
@@ -45,7 +45,7 @@ struct MainView: View {
                                 .gesture(DragGesture(minimumDistance: 0)
                                     .onChanged { g in
                                         if dockStart == nil { dockStart = dock }
-                                        dockHeight = Double(min(max(300, geo.size.height - 380), max(300, (dockStart ?? dock) - g.translation.height)))
+                                        dockHeight = Double(min(max(326, geo.size.height - 380), max(326, (dockStart ?? dock) - g.translation.height)))
                                     }
                                     .onEnded { _ in dockStart = nil }))
                         DockPanel()
@@ -65,7 +65,7 @@ struct MainView: View {
                     .ignoresSafeArea()
             }
         }
-        .background(Theme.bg)
+        .background { Backdrop().ignoresSafeArea() }
         .navigationTitle(store.project.name)
         // No separate title-bar material: the picture side and the panel side each keep their own colour to the top.
         .toolbarBackground(.hidden, for: .windowToolbar)
@@ -198,7 +198,6 @@ struct VideoPane: View {
 
     var body: some View {
         ZStack {
-            Backdrop()
             if store.project.video != nil, store.pictureOut {
                 VStack(spacing: 10) {
                     Image(systemName: "macwindow.on.rectangle").font(.system(size: 26, weight: .light)).foregroundStyle(Theme.tertiary)

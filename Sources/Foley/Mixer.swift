@@ -43,7 +43,7 @@ struct MixerView: View {
                 HStack {
                     Text("\(p.tracks.count) track\(p.tracks.count == 1 ? "" : "s")\(buses.isEmpty ? "" : ", \(buses.count) bus\(buses.count == 1 ? "" : "es")")").font(.system(size: 11.5)).foregroundStyle(Theme.secondary)
                     Spacer()
-                    Text("Select a track, then click a socket under a bus or the master to plug it in · double-click a fader to reset").font(.system(size: 11.5)).foregroundStyle(Theme.tertiary)
+                    Text("Drag a cable from a track's socket to a bus, the master or another track · double-click a fader to reset").font(.system(size: 11.5)).foregroundStyle(Theme.tertiary)
                 }
                 .padding(.horizontal, 16).frame(height: 34)
             }
@@ -138,13 +138,74 @@ private func stripOuter(_ w: CGFloat, compact: Bool) -> CGFloat {
     compact ? w - 14 + 8 + 30 + 7 + (w > stripWidth ? 17 : 5) + 14 : w
 }
 
+/// The cables' motion: every cable hangs from its two sockets and its middle is a weight on a spring, so it sways when it is
+/// replugged, dragged, or brushed by the pointer, then settles. The clock only runs while something is still moving.
+@Observable private final class CableSim {
+    struct Body { var p: CGPoint; var v = CGVector.zero }
+    /// Bumped once per step, so the drawing follows.
+    var tick = 0
+    @ObservationIgnored var bodies: [String: Body] = [:]
+    @ObservationIgnored var rests: [String: CGPoint] = [:]
+    @ObservationIgnored var pointer: CGPoint?
+    @ObservationIgnored private var timer: Timer?
+    @ObservationIgnored private var last = CACurrentMediaTime()
+
+    /// Where a cable's middle is now. A cable seen for the first time starts at its socket and falls into place.
+    func middle(_ key: String, rest: CGPoint, from start: CGPoint) -> CGPoint {
+        rests[key] = rest
+        if let b = bodies[key] { return b.p }
+        bodies[key] = Body(p: start)
+        return start
+    }
+
+    func wake() {
+        guard timer == nil else { return }
+        last = CACurrentMediaTime()
+        let t = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in self?.step() }
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
+    }
+
+    private func step() {
+        let now = CACurrentMediaTime()
+        let dt = CGFloat(min(1.0 / 30, now - last))
+        last = now
+        var moving = false
+        for key in Array(bodies.keys) {
+            guard let rest = rests[key], var b = bodies[key] else { bodies[key] = nil; continue }
+            // A soft spring back to where the cable hangs, lightly damped so it swings past and returns.
+            var ax = (rest.x - b.p.x) * 150 - b.v.dx * 11, ay = (rest.y - b.p.y) * 150 - b.v.dy * 11
+            if let m = pointer {
+                let dx = b.p.x - m.x, dy = b.p.y - m.y, d = max(1, hypot(dx, dy))
+                if d < 46 { let push = (1 - d / 46) * 2600; ax += dx / d * push; ay += dy / d * push }
+            }
+            b.v.dx += ax * dt; b.v.dy += ay * dt
+            b.p.x += b.v.dx * dt; b.p.y += b.v.dy * dt
+            bodies[key] = b
+            if abs(b.v.dx) + abs(b.v.dy) > 1.5 || abs(rest.x - b.p.x) + abs(rest.y - b.p.y) > 0.4 { moving = true }
+        }
+        rests = rests.filter { bodies[$0.key] != nil }
+        tick &+= 1
+        if !moving && pointer == nil { timer?.invalidate(); timer = nil }
+    }
+
+    func forget(_ key: String) { bodies[key] = nil; rests[key] = nil }
+    deinit { timer?.invalidate() }
+}
+
 /// The patch bay under the strips: a socket under every strip, and a cable from each track to where it plays into.
-/// Solid cables carry sound (track to bus, bus to master). Dashed ones are sidechains: the track at the arrow dips when the other is heard.
+/// Drag from a track's socket to a bus's or the master's to send it there. Drag onto another track to sidechain: that track
+/// then dips while this one is heard (drag the same way again to undo). Solid cables carry sound; dashed ones are sidechains.
 private struct Cables: View {
     @Environment(Store.self) private var store
     let compact: Bool
+    @State private var sim = CableSim()
+    /// A cable being dragged: the socket it comes from and where the pointer has it.
+    @State private var pulling: (from: Int, at: CGPoint)?
 
     private struct Port { let x: CGFloat; let track: UUID?; let bus: UUID?; let master: Bool }
+    private static let top: CGFloat = 7
+    private static let height: CGFloat = 66
 
     private var ports: [Port] {
         let p = store.project
@@ -160,59 +221,116 @@ private struct Cables: View {
         return out
     }
 
+    private func nearest(_ ports: [Port], to x: CGFloat, within: CGFloat = 26) -> Int? {
+        guard let i = ports.indices.min(by: { abs(ports[$0].x - x) < abs(ports[$1].x - x) }), abs(ports[i].x - x) < within else { return nil }
+        return i
+    }
+
     var body: some View {
         let p = store.project
         let ports = self.ports
         let width = (ports.last?.x ?? 0) + stripOuter(stripWidth + 12, compact: compact) / 2
         var selected: UUID? { if case .track(let id) = store.selection { return id } else { return nil } }
+        let target = pulling.flatMap { pull in nearest(ports, to: pull.at.x).flatMap { $0 == pull.from ? nil : $0 } }
         Canvas { ctx, size in
-            let top: CGFloat = 6
+            _ = sim.tick
+            let top = Self.top
             func x(track id: UUID?) -> CGFloat? { id.flatMap { i in ports.first { $0.track == i }?.x } }
             func x(bus id: UUID?) -> CGFloat? { id.flatMap { i in ports.first { $0.bus == i }?.x } }
             let master = ports.last?.x ?? 0
-            func cable(_ a: CGFloat, _ b: CGFloat, _ color: Color, strong: Bool, dashed: Bool = false) {
-                let depth = min(size.height - 3, 14 + abs(b - a) * 0.05) * (dashed ? 0.6 : 1)
+            func cable(_ key: String, _ a: CGPoint, _ b: CGPoint, _ color: Color, strong: Bool, dashed: Bool = false) {
+                let sag = min(size.height - top - 6, 15 + abs(b.x - a.x) * 0.055) * (dashed ? 0.62 : 1)
+                let rest = CGPoint(x: (a.x + b.x) / 2, y: max(a.y, b.y) + sag)
+                let m = sim.middle(key, rest: rest, from: a)
+                // A curve that passes through the weight.
+                let control = CGPoint(x: 2 * m.x - (a.x + b.x) / 2, y: 2 * m.y - (a.y + b.y) / 2)
                 var path = Path()
-                path.move(to: CGPoint(x: a, y: top))
-                path.addCurve(to: CGPoint(x: b, y: top), control1: CGPoint(x: a, y: top + depth * 1.25), control2: CGPoint(x: b, y: top + depth * 1.25))
-                ctx.stroke(path, with: .color(color.opacity(strong ? 0.95 : 0.3)),
-                           style: StrokeStyle(lineWidth: strong ? 2 : 1.5, lineCap: .round, dash: dashed ? [4, 4] : []))
+                path.move(to: a)
+                path.addQuadCurve(to: b, control: control)
+                ctx.stroke(path, with: .color(.black.opacity(strong ? 0.35 : 0.15)), style: StrokeStyle(lineWidth: strong ? 4.5 : 3, lineCap: .round))
+                ctx.stroke(path, with: .color(color.opacity(strong ? 0.95 : 0.32)),
+                           style: StrokeStyle(lineWidth: strong ? 2.2 : 1.5, lineCap: .round, dash: dashed ? [5, 4] : []))
                 if dashed {
-                    // An arrowhead at the track that dips.
                     var head = Path()
-                    head.move(to: CGPoint(x: b, y: top + 1)); head.addLine(to: CGPoint(x: b - 4, y: top + 9)); head.addLine(to: CGPoint(x: b + 4, y: top + 9)); head.closeSubpath()
+                    head.move(to: CGPoint(x: b.x, y: b.y + 2)); head.addLine(to: CGPoint(x: b.x - 4, y: b.y + 10)); head.addLine(to: CGPoint(x: b.x + 4, y: b.y + 10)); head.closeSubpath()
                     ctx.fill(head, with: .color(color.opacity(strong ? 0.95 : 0.4)))
                 }
             }
+            func at(_ x: CGFloat) -> CGPoint { CGPoint(x: x, y: top) }
             for t in p.tracks {
                 guard let a = x(track: t.id) else { continue }
                 let strong = selected == nil || selected == t.id
-                cable(a, x(bus: t.groupID) ?? master, t.kind.color, strong: strong)
+                // The cable being pulled out of this socket is drawn from the pointer instead.
+                if pulling.map({ ports[$0.from].track == t.id }) != true || target.map({ ports[$0].track != nil }) == true {
+                    cable("t-\(t.id)", at(a), at(x(bus: t.groupID) ?? master), t.kind.color, strong: strong)
+                }
                 if let d = t.duck {
                     let sources = d.source.map { [$0] } ?? p.tracks.filter { $0.kind == .dialogue && $0.id != t.id }.map(\.id)
-                    for sid in sources { if let b = x(track: sid) { cable(b, a, Theme.accent, strong: strong, dashed: true) } }
+                    for sid in sources { if let b = x(track: sid) { cable("s-\(sid)-\(t.id)", at(b), at(a), Theme.accent, strong: strong, dashed: true) } }
                 }
             }
-            for g in p.groups ?? [] { if let a = x(bus: g.id) { cable(a, master, Color(white: 0.78), strong: selected == nil) } }
-            for port in ports {
-                let lit = port.track != nil && port.track == selected
-                let r: CGFloat = 4
+            for g in p.groups ?? [] { if let a = x(bus: g.id) { cable("b-\(g.id)", at(a), at(master), Color(white: 0.78), strong: selected == nil) } }
+            if let pull = pulling {
+                let from = ports[pull.from]
+                let color = from.track.flatMap { id in p.tracks.first { $0.id == id }?.kind.color } ?? Color(white: 0.78)
+                let end = target.map { at(ports[$0].x) } ?? pull.at
+                cable("pull", at(from.x), end, target.map { ports[$0].track != nil } == true ? Theme.accent : color, strong: true, dashed: target.map { ports[$0].track != nil } == true)
+            }
+            for (i, port) in ports.enumerated() {
+                let lit = (port.track != nil && port.track == selected) || target == i
+                let r: CGFloat = target == i ? 6.5 : 4.5
                 let rect = CGRect(x: port.x - r, y: top - r, width: r * 2, height: r * 2)
                 ctx.fill(Path(ellipseIn: rect), with: .color(Color(white: 0.09)))
-                ctx.stroke(Path(ellipseIn: rect), with: .color(lit ? Theme.accent : Color.white.opacity(port.track == nil ? 0.8 : 0.45)), lineWidth: 1.5)
+                ctx.stroke(Path(ellipseIn: rect), with: .color(lit ? Theme.accent : Color.white.opacity(port.track == nil ? 0.8 : 0.5)), lineWidth: target == i ? 2 : 1.5)
             }
         }
-        .frame(width: width, height: 40)
+        .frame(width: width, height: Self.height)
         .contentShape(Rectangle())
-        .gesture(SpatialTapGesture().onEnded { tap in
-            guard let port = ports.min(by: { abs($0.x - tap.location.x) < abs($1.x - tap.location.x) }), abs(port.x - tap.location.x) < 24 else { return }
-            if let id = port.track { store.selection = .track(id); return }
-            guard let from = selected else { store.say("Select a track first, then click the socket to plug it into."); return }
-            if port.master { store.setGroup(nil, for: [from]) }
-            else if let name = p.group(port.bus)?.name { store.setGroup(name, for: [from]) }
-        })
-        .hint("Cables show where each track plays into. Select a track, then click the socket under a bus or the master to plug it in there. A dashed cable is a sidechain: the track at the arrow dips when the other is heard.")
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(let at): sim.pointer = at; sim.wake()
+            case .ended: sim.pointer = nil
+            }
+        }
+        .gesture(DragGesture(minimumDistance: 0)
+            .onChanged { g in
+                if pulling == nil {
+                    guard let i = nearest(ports, to: g.startLocation.x), !ports[i].master else { return }
+                    pulling = (i, g.location)
+                } else {
+                    pulling?.at = g.location
+                }
+                sim.pointer = nil
+                sim.wake()
+            }
+            .onEnded { g in
+                defer { pulling = nil; sim.forget("pull"); sim.wake() }
+                let moved = hypot(g.translation.width, g.translation.height) > 5
+                guard moved else { tap(ports, at: g.startLocation.x, selected: selected); return }
+                guard let pull = pulling, let j = nearest(ports, to: g.location.x), j != pull.from else { return }
+                let from = ports[pull.from], to = ports[j]
+                guard let source = from.track else { return }   // a bus always plays into the master
+                if to.master { store.setGroup(nil, for: [source]) }
+                else if let name = p.group(to.bus)?.name { store.setGroup(name, for: [source]) }
+                else if let other = to.track {
+                    // Onto another track: that track dips while this one is heard. The same drag again takes it off.
+                    let already = p.tracks.first { $0.id == other }?.duck?.source == source
+                    Task { await store.setDucking(other, on: !already, source: .some(source)) }
+                }
+            })
+        .onChange(of: MixGraph.busSignature(p) + p.tracks.map { "\($0.groupID?.uuidString ?? "-")\($0.duck?.source?.uuidString ?? ($0.duck == nil ? "" : "v"))" }.joined()) { _, _ in sim.wake() }
+        .onAppear { sim.wake() }
+        .hint("Drag from a track's socket to a bus or the master to send it there. Drag onto another track to sidechain: that track dips while this one is heard. Dashed cables are sidechains.")
         .accessibilityLabel("Routing: each track's output")
+    }
+
+    private func tap(_ ports: [Port], at x: CGFloat, selected: UUID?) {
+        guard let i = nearest(ports, to: x) else { return }
+        let port = ports[i]
+        if let id = port.track { store.selection = .track(id); return }
+        guard let from = selected else { store.say("Drag from a track's socket to this one to plug it in."); return }
+        if port.master { store.setGroup(nil, for: [from]) }
+        else if let name = store.project.group(port.bus)?.name { store.setGroup(name, for: [from]) }
     }
 }
 
