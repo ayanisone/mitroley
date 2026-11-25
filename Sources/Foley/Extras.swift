@@ -15,28 +15,22 @@ struct Splash: View {
 
     var body: some View {
         if phase < 3 {
-            ZStack {
-                // The window's own background, so it reads as the app arriving, not a black card thrown over it.
-                Theme.bg.opacity(phase == 1 ? 1 : 0)
-                VStack(spacing: 18) {
-                    Image(nsImage: NSApp.applicationIconImage)
-                        .resizable().interpolation(.high)
-                        .frame(width: 112, height: 112)
-                        .shadow(color: .black.opacity(0.5), radius: 18, y: 8)
-                    Text("mitroley").font(.system(size: 22, weight: .medium)).tracking(-0.3).foregroundStyle(.white.opacity(0.92))
-                }
-                .scaleEffect(reduceMotion ? 1 : (phase == 0 ? 0.96 : 1))
+            // Only the logo, over the app as it is: no card, no fill.
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable().interpolation(.high)
+                .frame(width: 128, height: 128)
+                .shadow(color: .black.opacity(0.55), radius: 22, y: 10)
+                .scaleEffect(reduceMotion ? 1 : (phase == 0 ? 0.94 : phase == 1 ? 1 : 1.04))
                 .opacity(phase == 1 ? 1 : 0)
-            }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             .ignoresSafeArea()
-            .allowsHitTesting(phase == 1)
+            .allowsHitTesting(false)
             .accessibilityHidden(true)
             .onAppear {
                 guard !Self.shown, !CommandLine.arguments.contains("--selftest") else { phase = 3; return }
                 Self.shown = true
                 if sound { Self.chime() }
-                // Already there on the first frame; only the leaving is animated.
-                phase = 1
+                withAnimation(.easeOut(duration: 0.25)) { phase = 1 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
                     withAnimation(.easeInOut(duration: 0.45)) { phase = 2 }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { phase = 3 }

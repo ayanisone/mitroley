@@ -127,7 +127,8 @@ private struct StripShell<Content: View>: View {
         .frame(width: compact ? compactWidth(width) : width)
         .frame(maxHeight: .infinity)
         .background(selected ? Color.white.opacity(0.07) : Theme.raised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(selected ? color.opacity(0.6) : .clear, lineWidth: 1))
+        // Glass wants a thin light edge to read as a surface; a selected strip takes its track's colour instead.
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(selected ? color.opacity(0.6) : Color.white.opacity(Theme.Look.shared.glass ? 0.12 : 0), lineWidth: 1))
         .opacity(dim ? 0.6 : 1)
     }
     private func compactWidth(_ w: CGFloat) -> CGFloat { stripOuter(w, compact: true) }
@@ -203,6 +204,8 @@ private struct Cables: View {
     @State private var sim = CableSim()
     /// A cable being dragged: the socket it comes from and where the pointer has it.
     @State private var pulling: (from: Int, at: CGPoint)?
+    /// How cables are drawn: 0 hanging, 1 taut, 2 stepped.
+    @AppStorage("cableShape") private var shape = 0
 
     private struct Port { let x: CGFloat; let track: UUID?; let bus: UUID?; let master: Bool }
     private static let top: CGFloat = 7
@@ -243,11 +246,23 @@ private struct Cables: View {
                 let sag = min(size.height - top - 6, 15 + abs(b.x - a.x) * 0.055) * (dashed ? 0.62 : 1)
                 let rest = CGPoint(x: (a.x + b.x) / 2, y: max(a.y, b.y) + sag)
                 let m = sim.middle(key, rest: rest, from: a)
-                // A curve that passes through the weight.
-                let control = CGPoint(x: 2 * m.x - (a.x + b.x) / 2, y: 2 * m.y - (a.y + b.y) / 2)
                 var path = Path()
                 path.move(to: a)
-                path.addQuadCurve(to: b, control: control)
+                switch shape {
+                case 1:
+                    // Taut: two straight runs meeting at the weight.
+                    path.addLine(to: m)
+                    path.addLine(to: b)
+                case 2:
+                    // Stepped: down, across and up, with rounded corners, like a circuit trace.
+                    let r = min(7, abs(b.x - a.x) / 2, max(1, m.y - a.y))
+                    path.addArc(tangent1End: CGPoint(x: a.x, y: m.y), tangent2End: CGPoint(x: b.x, y: m.y), radius: r)
+                    path.addArc(tangent1End: CGPoint(x: b.x, y: m.y), tangent2End: b, radius: r)
+                    path.addLine(to: b)
+                default:
+                    // Hanging: a curve that passes through the weight.
+                    path.addQuadCurve(to: b, control: CGPoint(x: 2 * m.x - (a.x + b.x) / 2, y: 2 * m.y - (a.y + b.y) / 2))
+                }
                 ctx.stroke(path, with: .color(.black.opacity(strong ? 0.35 : 0.15)), style: StrokeStyle(lineWidth: strong ? 4.5 : 3, lineCap: .round))
                 ctx.stroke(path, with: .color(color.opacity(strong ? 0.95 : 0.32)),
                            style: StrokeStyle(lineWidth: strong ? 2.2 : 1.5, lineCap: .round, dash: dashed ? [5, 4] : []))
@@ -319,10 +334,70 @@ private struct Cables: View {
                     Task { await store.setDucking(other, on: !already, source: .some(source)) }
                 }
             })
+        // Right-click a socket for the routing menu, as in FL: what the selected track does to the strip you clicked.
+        .overlay(alignment: .topLeading) {
+            ForEach(Array(ports.enumerated()), id: \.offset) { _, port in
+                Color.clear.frame(width: 30, height: 26).contentShape(Rectangle())
+                    .contextMenu { menu(for: port, selected: selected) }
+                    .position(x: port.x, y: Self.top + 4)
+            }
+        }
+        .onChange(of: shape) { _, _ in sim.wake() }
         .onChange(of: MixGraph.busSignature(p) + p.tracks.map { "\($0.groupID?.uuidString ?? "-")\($0.duck?.source?.uuidString ?? ($0.duck == nil ? "" : "v"))" }.joined()) { _, _ in sim.wake() }
         .onAppear { sim.wake() }
-        .hint("Drag from a track's socket to a bus or the master to send it there. Drag onto another track to sidechain: that track dips while this one is heard. Dashed cables are sidechains.")
+        .hint("Drag from a track's socket to a bus or the master to send it there, or onto another track to sidechain. Or select a track and right-click any socket for the routing menu and the cable shapes.")
         .accessibilityLabel("Routing: each track's output")
+    }
+
+    @ViewBuilder private func menu(for port: Port, selected: UUID?) -> some View {
+        let p = store.project
+        let from = p.tracks.first { $0.id == selected }
+        let here = port.master ? "Master" : (p.group(port.bus)?.name ?? p.tracks.first { $0.id == port.track }?.name ?? "")
+        if let from, from.id != port.track {
+            if port.master || port.bus != nil {
+                Button("Route \(from.name) to \(here)") { route(from.id, to: port) }
+                Button("Route Only \(from.name) to \(here)") {
+                    // Everything else that played into it goes back to the master.
+                    if let bus = port.bus { store.setGroup(nil, for: p.tracks.filter { $0.groupID == bus && $0.id != from.id }.map(\.id)) }
+                    route(from.id, to: port)
+                }
+                .disabled(port.master)
+            } else if let target = port.track {
+                Button("Sidechain \(from.name) to \(here)") { Task { await store.setDucking(target, on: true, source: .some(from.id)) } }
+                Button("Sidechain Only \(from.name) to \(here)") {
+                    Task {
+                        // Its other sidechains come off first.
+                        for t in p.tracks where t.duck?.source == from.id && t.id != target { await store.setDucking(t.id, on: false) }
+                        await store.setDucking(target, on: true, source: .some(from.id))
+                    }
+                }
+            }
+            Divider()
+        } else if from == nil {
+            Text("Select a track first, then right-click where it should go")
+            Divider()
+        }
+        if let id = port.track, let t = p.tracks.first(where: { $0.id == id }) {
+            Button("Send \(t.name) Straight to the Master") { store.setGroup(nil, for: [id]) }.disabled(t.groupID == nil)
+            Button("Remove Sidechain from \(t.name)") { Task { await store.setDucking(id, on: false) } }.disabled(t.duck == nil)
+            Button("New Bus for \(t.name)…") {
+                if let name = Ask.text("Name the bus", info: "", value: "Bus \((p.groups ?? []).count + 1)") { store.setGroup(name, for: [id]) }
+            }
+            Divider()
+        } else if let bus = port.bus {
+            Button("Send Everything on \(here) to the Master") { store.ungroup(bus) }
+            Divider()
+        }
+        Picker("Cable Shape", selection: $shape) {
+            Text("Hanging").tag(0)
+            Text("Taut").tag(1)
+            Text("Stepped").tag(2)
+        }
+    }
+
+    private func route(_ id: UUID, to port: Port) {
+        if port.master { store.setGroup(nil, for: [id]) }
+        else if let name = store.project.group(port.bus)?.name { store.setGroup(name, for: [id]) }
     }
 
     private func tap(_ ports: [Port], at x: CGFloat, selected: UUID?) {
