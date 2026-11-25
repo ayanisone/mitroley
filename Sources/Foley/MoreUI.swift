@@ -89,7 +89,7 @@ struct GroupLane: View {
 
     var body: some View {
         let members = store.project.tracks.filter { $0.groupID == group.id }
-        SlicedCanvas(start: 0, width: CGFloat(store.project.duration * pps) + 24) { ctx, size, _ in
+        SlicedCanvas(start: 0, width: CGFloat(store.project.reach * pps) + 24) { ctx, size, _ in
             guard !members.isEmpty else { return }
             let row = min(5, (size.height - 10) / CGFloat(members.count))
             for (i, t) in members.enumerated() {

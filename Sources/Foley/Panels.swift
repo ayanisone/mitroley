@@ -396,6 +396,7 @@ struct SettingsSheet: View {
     @AppStorage("startupSound") private var startupSound = true
     @AppStorage("movingBackdrop") private var movingBackdrop = true
     @AppStorage("hintBox") private var hintBox = true
+    @AppStorage("backdropPointer") private var backdropPointer = true
     @AppStorage("voiceAgentVoice") private var helperVoice = ""
     @AppStorage("voiceAgentVoiceName") private var helperVoiceName = ""
     @AppStorage("voiceAgentStyle") private var helperStyle = ""
@@ -485,6 +486,8 @@ struct SettingsSheet: View {
             Text("Theme").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.secondary)
             ThemePicker()
             Toggle("Wind in the picture behind the window", isOn: $movingBackdrop)
+                .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
+            Toggle("The picture reacts to the pointer (experimental)", isOn: $backdropPointer)
                 .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
             Toggle("Hint box in the corner: says what the pointer is on", isOn: $hintBox)
                 .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))

@@ -61,8 +61,9 @@ struct FlagView: NSViewRepresentable {
     final class Renderer: NSObject, MTKViewDelegate {
         private struct Uniforms {
             var aA = SIMD2<Float>(1, 1), aB = SIMD2<Float>(1, 1), res = SIMD2<Float>(1, 1)
+            var mouse = SIMD2<Float>(-9, -9), wake = SIMD2<Float>(-9, -9)
             var mixAB: Float = 1, dimA: Float = 1, dimB: Float = 1, t: Float = 0, wind: Float = 1, pinA: Float = 0, pinB: Float = 0
-            var inspector: Float = 0, bottom: Float = 0, pad: Float = 0
+            var inspector: Float = 0, bottom: Float = 0, push: Float = 0
         }
         private struct Slot { var texture: MTLTexture?; var w = 1, h = 1; var dim: Float = 1; var pinTop = false; var real = false }
 
@@ -75,6 +76,31 @@ struct FlagView: NSViewRepresentable {
         private var mixStart = CACurrentMediaTime() - 10
         private let t0 = CACurrentMediaTime()
         private weak var view: MTKView?
+        // The pointer as the cloth feels it: where it is, a point that trails behind it, and how hard it is moving.
+        private var mouse = SIMD2<Float>(-9, -9), wake = SIMD2<Float>(-9, -9)
+        private var push: Float = 0
+        private var lastDraw = CACurrentMediaTime()
+
+        /// Reads the pointer once per frame (no events, so it costs nothing when the flag is at rest).
+        private func feel(_ view: MTKView, now: Double) {
+            let dt = Float(min(0.1, max(0.001, now - lastDraw)))
+            lastDraw = now
+            var speed: Float = 0
+            if UserDefaults.standard.object(forKey: "backdropPointer") as? Bool ?? true, let window = view.window, view.bounds.width > 1 {
+                let p = view.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+                if view.bounds.contains(p) {
+                    let at = SIMD2(Float(p.x / view.bounds.width), Float(p.y / view.bounds.height))
+                    if mouse.x > -1 {
+                        let d = at - mouse
+                        speed = min(1, (d.x * d.x + d.y * d.y).squareRoot() / dt * 0.9)
+                        wake += (mouse - wake) * min(1, dt * 5)
+                    } else { wake = at }
+                    mouse = at
+                } else { mouse = SIMD2(-9, -9) }
+            } else { mouse = SIMD2(-9, -9) }
+            // Rises fast with a sweep of the pointer, dies away over about a second.
+            push += (speed - push) * min(1, dt * (speed > push ? 10 : 1.4))
+        }
 
         func attach(_ view: MTKView) {
             self.view = view
@@ -167,6 +193,7 @@ struct FlagView: NSViewRepresentable {
             guard let pipeline, let queue, let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
                   let buffer = queue.makeCommandBuffer(), let enc = buffer.makeRenderCommandEncoder(descriptor: pass) else { return }
             let now = CACurrentMediaTime()
+            feel(view, now: now)
             let mix = Float(min(1, (now - mixStart) / 1.1))
             func cover(_ s: Slot) -> SIMD2<Float> {
                 guard s.real else { return SIMD2(1, 1) }
@@ -181,6 +208,7 @@ struct FlagView: NSViewRepresentable {
             u.dimA = slots[0].real ? slots[0].dim * 0.78 : 1; u.dimB = slots[1].real ? slots[1].dim * 0.78 : 1
             u.t = Float(now - t0); u.wind = wind ? 1 : 0
             u.inspector = Float(FlagLayout.inspector * scale); u.bottom = Float(FlagLayout.bottom * scale)
+            u.mouse = mouse; u.wake = wake; u.push = wind ? push : 0
             u.pinA = slots[0].pinTop ? 1 : 0; u.pinB = slots[1].pinTop ? 1 : 0
             enc.setRenderPipelineState(pipeline)
             enc.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
@@ -196,13 +224,13 @@ struct FlagView: NSViewRepresentable {
         }
 
         /// Wakes the loop when the window comes back into view.
-        func wake() { view?.isPaused = false }
+        func resume() { view?.isPaused = false }
 
         static let shader = """
         #include <metal_stdlib>
         using namespace metal;
         struct V { float4 pos [[position]]; float2 v; };
-        struct U { float2 aA; float2 aB; float2 res; float mixAB; float dimA; float dimB; float t; float wind; float pinA; float pinB; float inspector; float bottom; float pad; };
+        struct U { float2 aA; float2 aB; float2 res; float2 mouse; float2 wake; float mixAB; float dimA; float dimB; float t; float wind; float pinA; float pinB; float inspector; float bottom; float push; };
 
         vertex V flag_vertex(uint vid [[vertex_id]]) {
             const float2 p[4] = { float2(-1, -1), float2(1, -1), float2(-1, 1), float2(1, 1) };
@@ -217,7 +245,7 @@ struct FlagView: NSViewRepresentable {
         static float fbm(float2 p) { float s = 0.0, a = 0.5; for (int i = 0; i < 3; i++) { s += a * noise(p); p = p * 2.03 + 7.3; a *= 0.5; } return s; }
 
         // Cloth: travelling waves that grow away from the pinned edge, plus a slow gust field. xy = how far to bend, z = fold shading.
-        static float3 cloth(float2 uv, float pin, float phase, float t, float wind) {
+        static float3 cloth(float2 uv, float pin, float phase, float t, float wind, constant U &u) {
             float free = mix(uv.x, 1.0 - uv.y, pin);
             float amp = wind * (0.015 + 0.07 * free * free);
             float gust = fbm(uv * 1.6 + float2(t * 0.09, -t * 0.05) + phase);
@@ -229,11 +257,22 @@ struct FlagView: NSViewRepresentable {
             d += (float2(gust, fbm(uv * 1.2 - t * 0.06 + 11.0)) - 0.5) * amp * 1.4;
             float slope = cos(uv.x * 7.0 - t * 1.9 * g + uv.y * 2.4 + phase) * 0.5 + cos(uv.y * 9.0 + t * 1.3 * g - uv.x * 3.1 + phase * 1.7) * 0.3;
             float shade = 1.0 + slope * (0.10 + 0.22 * free) * wind;
+            // The pointer: the cloth bellies away from it, a ring runs outward, and a fainter one follows where it has been.
+            if (u.push > 0.002) {
+                float2 asp = float2(u.res.x / u.res.y, 1.0);
+                float2 dv = (uv - u.mouse) * asp; float r = length(dv); float2 dir = dv / max(r, 0.0001);
+                float belly = exp(-r * r / 0.018);
+                float ring = sin(r * 34.0 - t * 7.0) * exp(-r * 5.5);
+                d += dir / asp * (belly * 0.034 + ring * 0.007) * u.push;
+                float2 dw = (uv - u.wake) * asp; float rw = length(dw);
+                d += dw / max(rw, 0.0001) / asp * exp(-rw * rw / 0.03) * 0.016 * u.push;
+                shade += (belly * 0.22 + ring * 0.08) * u.push;
+            }
             return float3(d, shade);
         }
 
         static float3 sampleTheme(texture2d<float> tex, sampler s, float2 v, float2 a, float pin, float dim, float phase, float pane, constant U &u) {
-            float3 c = cloth(v, pin, phase, u.t, u.wind);
+            float3 c = cloth(v, pin, phase, u.t, u.wind, u);
             float2 uv = (v - 0.5) * a + 0.5 + c.xy;
             uv = clamp(uv, float2(0.001), float2(0.999));
             // Behind a panel: read a much smaller copy of the picture, which is the picture out of focus, and hold it darker.
