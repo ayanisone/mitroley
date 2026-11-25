@@ -74,6 +74,7 @@ final class Player {
     }
 
     private func startEngine() {
+        idle = 0
         guard !graph.engine.isRunning else { return }
         do {
             graph.engine.prepare()
@@ -134,7 +135,19 @@ final class Player {
         applyNow()
     }
 
+    /// Ticks since playback stopped. After twenty seconds of quiet the audio engine is put to rest, so an open but idle
+    /// app costs the Mac next to nothing and no longer keeps it awake; it starts again the instant anything plays or changes.
+    @ObservationIgnored private var idle = 0
+
     private func step() {
+        if isPlaying {
+            idle = 0
+        } else {
+            idle += 1
+            if idle == 60 * 20, graph.engine.isRunning { graph.engine.pause() }
+            // At rest there is nothing to meter or move: look in six times a second instead of sixty.
+            if idle > 60 * 20, idle % 10 != 0 { return }
+        }
         if isPlaying {
             let t = graph.time
             if let r = loopRange, t >= r.upperBound {
