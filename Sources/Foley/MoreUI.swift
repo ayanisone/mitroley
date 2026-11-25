@@ -60,7 +60,7 @@ struct GroupHeader: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(PressStyle(scale: 0.85))
-            .help(group.collapsed ? "Show the tracks in this group" : "Fold the tracks away")
+            .hint(group.collapsed ? "Show the tracks in this group" : "Fold the tracks away")
             Text(group.name).font(.system(size: 12.5, weight: .semibold)).lineLimit(1)
             Text("\(count)").font(.system(size: 11, weight: .medium).monospacedDigit()).foregroundStyle(Theme.tertiary)
             Spacer(minLength: 2)
@@ -178,7 +178,7 @@ struct VersionSwitch: View {
         let list = store.versionList
         SegmentedPill(options: list.enumerated().map { (value: $1, label: String(UnicodeScalar(UInt8(65 + min(25, $0))))) },
                       selection: store.folder, segmentWidth: 30, settleFirst: true) { store.switchVersion(to: $0) }
-            .help("Cuts of this film, oldest first. Switching stays on the same moment of picture.")
+            .hint("Cuts of this film, oldest first. Switching stays on the same moment of picture.")
     }
 }
 
@@ -409,6 +409,6 @@ struct MasterHeader: View {
         .frame(height: Metrics.master)
         .background(Color.white.opacity(0.045))
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
-        .help("Master volume: applies to the whole mix and to every export. Double-click to reset.")
+        .hint("Master volume: applies to the whole mix and to every export. Double-click to reset.")
     }
 }

@@ -483,7 +483,7 @@ struct VoiceAgentButton: View {
         Button { agent.toggle(store) } label: {
             Label("Voice helper", systemImage: agent.isOn ? "waveform.circle.fill" : "waveform.circle")
         }
-        .help(agent.isOn ? "Stop the voice helper" : "Talk to the voice helper: ask it anything or have it work the app for you. Uses your ElevenLabs agent minutes.")
+        .hint(agent.isOn ? "Stop the voice helper" : "Talk to the voice helper: ask it anything or have it work the app for you. Uses your ElevenLabs agent minutes.")
     }
 }
 
@@ -510,13 +510,13 @@ struct VoiceAgentStrip: View {
                         .frame(width: 22, height: 22).background(Color.white.opacity(0.08), in: Circle()).contentShape(Circle())
                 }
                 .buttonStyle(PressStyle(scale: 0.9))
-                .help(agent.problem == nil ? "End the conversation" : "Dismiss")
+                .hint(agent.problem == nil ? "End the conversation" : "Dismiss")
             }
             .padding(.horizontal, 14).padding(.vertical, 9)
             .glass(in: Capsule())
             .contentShape(Capsule())
             .onTapGesture { agent.interrupt() }
-            .help(agent.state == .speaking ? "Click to stop it talking. You can also just talk over it." : "")
+            .hint(agent.state == .speaking ? "Click to stop it talking. You can also just talk over it." : "")
             .padding(.top, 10)
             .transition(.move(edge: .top).combined(with: .opacity))
         }

@@ -398,13 +398,27 @@ extension Store {
         return id
     }
 
-    /// Splits the film's own soundtrack into stems with ElevenLabs and lays them out as a muted group.
+    /// Splits one clip's sound into stems, each on its own track at the same place and length. The clip itself is muted, not removed.
     @discardableResult
-    func splitOriginalSound() async throws -> [String] {
-        guard Secrets.has(.elevenLabs) else { throw ServiceError(message: "Add your ElevenLabs API key in Settings to split the film's sound.") }
-        busy = "Splitting the film's sound"
+    func splitClipIntoStems(_ id: UUID) async throws -> [String] {
+        guard Secrets.has(.elevenLabs) else { throw ServiceError(message: "Add your ElevenLabs API key in Settings to split a sound into stems.") }
+        guard let l = project.locate(clip: id), let take = project.tracks[l.track].clips[l.clip].take else { throw ServiceError(message: "That clip has no sound yet.") }
+        let clip = project.tracks[l.track].clips[l.clip]
+        busy = "Splitting \(clip.name) into stems"
         defer { busy = nil }
-        let file = try await extractOriginalAudio()
+        let names = try await layStems(of: url(for: take), prefix: clip.name, group: clip.name + " stems", muted: false) { title, d, path in
+            var c = Clip(name: title, start: clip.start, duration: min(clip.duration, max(0.05, d - clip.offset)), fadeIn: clip.fadeIn, fadeOut: clip.fadeOut, takes: [Take(file: path, duration: d)])
+            c.offset = clip.offset
+            c.gain = clip.gain
+            return c
+        }
+        mutate { p in if let l = p.locate(clip: id) { p.tracks[l.track].clips[l.clip].muted = true } }
+        say("\(clip.name) is split into \(names.count) stems on their own tracks. The clip itself is muted, so nothing plays twice.")
+        return names
+    }
+
+    /// Sends a file to ElevenLabs, unpacks the stems it returns and puts each on a new track in one group.
+    private func layStems(of file: URL, prefix: String, group: String, muted: Bool, clip: @escaping (String, Double, String) -> Clip) async throws -> [String] {
         let zip = try await ElevenLabs.stems(of: file)
         let work = subfolder("Audio").appendingPathComponent("stems-" + UUID().uuidString.prefix(8), isDirectory: true)
         try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
@@ -427,19 +441,32 @@ extension Store {
                 let stem = f.deletingPathExtension().lastPathComponent.lowercased()
                 let kind: TrackKind = stem.contains("vocal") ? .dialogue : stem.contains("other") ? .fx : .music
                 let title = stem.contains("vocal") ? "Voice" : stem.contains("other") ? "Other (effects, pads)" : stem.capitalized
-                var t = Track(name: "Original · " + title, kind: kind)
+                var t = Track(name: prefix + " · " + title, kind: kind)
                 t.spaceMode = .dry
                 let d = AudioCache.shared.duration(f)
                 let path = rel + f.path.replacingOccurrences(of: work.path + "/", with: "")
-                t.clips = [Clip(name: title, start: 0, duration: d, fadeIn: 0, fadeOut: 0, takes: [Take(file: path, duration: d)])]
+                t.clips = [clip(title, d, path)]
                 p.tracks.append(t)
                 names.append(title); ids.append(t.id)
             }
-            var g = TrackGroup(name: "Original sound")
-            g.mute = true
+            var g = TrackGroup(name: group)
+            g.mute = muted
             p.groups = (p.groups ?? []) + [g]
             for i in p.tracks.indices where ids.contains(p.tracks[i].id) { p.tracks[i].groupID = g.id }
             p.tidyGroups()
+        }
+        return names
+    }
+
+    /// Splits the film's own soundtrack into stems with ElevenLabs and lays them out as a muted group.
+    @discardableResult
+    func splitOriginalSound() async throws -> [String] {
+        guard Secrets.has(.elevenLabs) else { throw ServiceError(message: "Add your ElevenLabs API key in Settings to split the film's sound.") }
+        busy = "Splitting the film's sound"
+        defer { busy = nil }
+        let file = try await extractOriginalAudio()
+        let names = try await layStems(of: file, prefix: "Original", group: "Original sound", muted: true) { title, d, path in
+            Clip(name: title, start: 0, duration: d, fadeIn: 0, fadeOut: 0, takes: [Take(file: path, duration: d)])
         }
         say("The film's sound is split into \(names.count) stems, muted. Solo one to hear it.")
         return names

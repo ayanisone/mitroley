@@ -3,18 +3,6 @@ import AppKit
 
 // MARK: - Palette and metrics
 
-enum Theme {
-    static let bg = Color(red: 0.047, green: 0.047, blue: 0.055)
-    static let panel = Color(red: 0.082, green: 0.082, blue: 0.094)
-    static let raised = Color.white.opacity(0.06)
-    static let lane = Color.white.opacity(0.028)
-    static let line = Color.white.opacity(0.08)
-    static let secondary = Color.white.opacity(0.56)
-    static let tertiary = Color.white.opacity(0.34)
-    static let accent = Color(red: 1.0, green: 0.62, blue: 0.11)
-    static let danger = Color(red: 1.0, green: 0.36, blue: 0.33)
-}
-
 enum Metrics {
     static let header: CGFloat = 216
     static let ruler: CGFloat = 24
@@ -382,7 +370,7 @@ struct TimeEntry: View {
             .onSubmit { commit(); focused = false }
             .onChange(of: focused) { _, on in if !on { commit() } }
             .onChange(of: seconds, initial: true) { _, v in if !focused { text = v.map(Self.show) ?? "" } }
-            .help("Type a length: seconds, such as 12.5, or minutes and seconds, such as 1:05.")
+            .hint("Type a length: seconds, such as 12.5, or minutes and seconds, such as 1:05.")
     }
 }
 

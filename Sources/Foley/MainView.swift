@@ -7,7 +7,7 @@ struct MainView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var timelineHeight: CGFloat = 380
     @State private var dragStart: CGFloat?
-    @AppStorage("dockHeight") private var dockHeight = 290.0
+    @AppStorage("dockHeight") private var dockHeight = 320.0
     @State private var dockStart: CGFloat?
 
     var body: some View {
@@ -17,7 +17,7 @@ struct MainView: View {
                 // The dock under the timeline takes its height first; the picture always keeps at least 160 pt.
                 // With the dock open the timeline may go down to 150 pt, so the picture keeps 230.
                 let least: CGFloat = store.dock == nil ? 180 : 150
-                let dock = store.dock == nil ? 0 : min(max(240, CGFloat(dockHeight)), max(240, geo.size.height - 230 - least))
+                let dock = store.dock == nil ? 0 : min(max(300, CGFloat(dockHeight)), max(300, geo.size.height - 230 - least))
                 let maxTimeline = max(least, geo.size.height - (dock > 0 ? 230 : 220) - dock)
                 let tl = min(maxTimeline, max(least, timelineHeight))
                 VStack(spacing: 0) {
@@ -45,7 +45,7 @@ struct MainView: View {
                                 .gesture(DragGesture(minimumDistance: 0)
                                     .onChanged { g in
                                         if dockStart == nil { dockStart = dock }
-                                        dockHeight = Double(min(max(240, geo.size.height - 380), max(240, (dockStart ?? dock) - g.translation.height)))
+                                        dockHeight = Double(min(max(300, geo.size.height - 380), max(300, (dockStart ?? dock) - g.translation.height)))
                                     }
                                     .onEnded { _ in dockStart = nil }))
                         DockPanel()
@@ -73,21 +73,21 @@ struct MainView: View {
             ToolbarItemGroup(placement: .primaryAction) {
                 RoomButton()
                 Button { store.toggleDock("mixer") } label: { Image(systemName: "slider.vertical.3") }
-                    .help("Mixer under the timeline: faders, buses, routing and sidechain (⌥⌘M)")
+                    .hint("Mixer under the timeline: faders, buses, routing and sidechain (⌥⌘M)")
                 Button { store.toggleDock("library") } label: { Image(systemName: "square.stack.3d.up") }
-                    .help("Library under the timeline: your own sounds, ready to drag onto a track (⌥⌘L)")
+                    .hint("Library under the timeline: your own sounds, ready to drag onto a track (⌥⌘L)")
                 Button { store.showClaude.toggle() } label: {
                     Label("Claude", systemImage: "sparkle")
                 }
-                .help("Let Claude fit the sound to the picture (⌘K)")
+                .hint("Let Claude fit the sound to the picture (⌘K)")
                 Button { store.showExport = true } label: {
                     Label("Export", systemImage: "square.and.arrow.up")
                 }
-                .help("Export the mix (⌘E)")
+                .hint("Export the mix (⌘E)")
                 Button { store.showSettings = true } label: {
                     Label("Settings", systemImage: "gearshape")
                 }
-                .help("API keys and models (⌘,)")
+                .hint("API keys and models (⌘,)")
             }
         }
         .overlay(alignment: .top) { VoiceAgentStrip().animation(Motion.ui(reduceMotion), value: store.voiceAgent.isOn) }
@@ -113,6 +113,8 @@ struct MainView: View {
         .sheet(isPresented: $store.showDub) { DubSheet().environment(store) }
         .sheet(isPresented: $store.showCutCheck) { CutCheckSheet().environment(store) }
         .overlay(alignment: .bottom) { CrashBar() }
+        .overlay(alignment: .bottomLeading) { HintBox() }
+        .overlay { LicenseGate() }
         .overlay { Splash() }
         .sheet(isPresented: $store.showSettings) { SettingsSheet().environment(store) }
         // Icons only, and no "Icon and Text" choice to fall into: it also overrides a mode saved by an earlier launch.
@@ -155,6 +157,8 @@ struct WindowAccessor: NSViewRepresentable {
 
 struct PlayerLayerView: NSViewRepresentable {
     let player: AVPlayer
+    /// Nothing painted around the picture, so what is behind the view shows beside it.
+    var clear = false
     final class Host: NSView {
         let playerLayer = AVPlayerLayer()
         override init(frame: NSRect) {
@@ -177,6 +181,7 @@ struct PlayerLayerView: NSViewRepresentable {
     func makeNSView(context: Context) -> Host {
         let v = Host()
         v.playerLayer.player = player
+        if clear { v.layer?.backgroundColor = NSColor.clear.cgColor }
         return v
     }
     func updateNSView(_ v: Host, context: Context) { v.playerLayer.player = player }
@@ -185,16 +190,44 @@ struct PlayerLayerView: NSViewRepresentable {
 struct VideoPane: View {
     @Environment(Store.self) private var store
     @State private var targeted = false
+    @State private var hovering = false
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
+    /// The film thumbnail nearest the playhead: the backdrop is a dithered reflection of it.
+    private var backdropFrame: NSImage? {
+        let strip = store.filmstrip
+        guard !strip.isEmpty, store.project.duration > 0 else { return nil }
+        return strip[min(strip.count - 1, max(0, Int(store.player.time / store.project.duration * Double(strip.count))))]
+    }
     /// The one gap around the picture: above it, between it and the transport, and under the transport.
     static let gap: CGFloat = 12
 
     var body: some View {
         ZStack {
-            Color.black
-            if store.project.video != nil {
+            Backdrop(frame: backdropFrame)
+            if store.project.video != nil, store.pictureOut {
+                VStack(spacing: 10) {
+                    Image(systemName: "macwindow.on.rectangle").font(.system(size: 26, weight: .light)).foregroundStyle(Theme.tertiary)
+                    Text("The picture is in its own window").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.secondary)
+                    Button("Bring It Back") { dismissWindow(id: "picture") }.buttonStyle(PillButtonStyle())
+                }
+                .padding(.bottom, Self.gap + TransportBar.height + Self.gap)
+            } else if store.project.video != nil {
                 // The picture keeps its shape inside what is left, centred; where it is shorter than that
                 // space, the extra is shared equally above it and between it and the transport.
-                PlayerLayerView(player: store.player.video)
+                PlayerLayerView(player: store.player.video, clear: true)
+                    .overlay(alignment: .topTrailing) {
+                        Button { openWindow(id: "picture") } label: {
+                            Image(systemName: "macwindow.on.rectangle").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white)
+                                .frame(width: 28, height: 24)
+                                .background(Color.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        }
+                        .buttonStyle(PressStyle(scale: 0.9))
+                        .hint("Move the picture into a window of its own, for a second screen")
+                        .padding(6)
+                        .opacity(hovering ? 1 : 0)
+                    }
+                    .onHover { hovering = $0 }
                     // Clicking the picture shows the session's own settings (name, picture, revised cut, spaces).
                     .onTapGesture { store.showSession() }
                     .padding(.bottom, Self.gap + TransportBar.height + Self.gap)
@@ -259,7 +292,7 @@ struct VideoPane: View {
                 .buttonStyle(PressStyle())
                 .disabled(store.generatingAll)
                 .padding(14)
-                .help("Generates every dashed clip from its prompt with ElevenLabs")
+                .hint("Generates every dashed clip from its prompt with ElevenLabs")
             }
         }
         .dropDestination(for: URL.self) { urls, _ in
@@ -283,7 +316,7 @@ struct TransportBar: View {
                 Image(systemName: "backward.end.fill").font(.system(size: 13)).frame(width: 20, height: 36)
             }
             .buttonStyle(PressStyle(scale: 0.88))
-            .help("Back to start (Return)")
+            .hint("Back to start (Return)")
 
             Button { store.player.toggle() } label: {
                 Image(systemName: store.player.isPlaying ? "pause.fill" : "play.fill")
@@ -293,7 +326,7 @@ struct TransportBar: View {
                     .contentTransition(.symbolEffect(.replace))
             }
             .buttonStyle(PressStyle(scale: 0.9))
-            .help("Play or pause (Space)")
+            .hint("Play or pause (Space)")
 
             Timecode()
 
@@ -304,7 +337,7 @@ struct TransportBar: View {
                     .frame(width: 20, height: 36)
             }
             .buttonStyle(PressStyle(scale: 0.88))
-            .help(store.project.loopRange == nil ? "Loop the whole film. Shift-drag on the ruler to loop a section."
+            .hint(store.project.loopRange == nil ? "Loop the whole film. Shift-drag on the ruler to loop a section."
                                                  : "Loop the marked section")
             .contextMenu {
                 Button("Loop Selection") { store.loopSelection() }
@@ -341,8 +374,8 @@ struct TransportBar: View {
             SegmentedPill(options: [(false, "Mine"), (true, "Film")], selection: store.player.filmOnly, segmentWidth: 44, height: 26, size: 11.5) { store.player.filmOnly = $0 }
                 .disabled(store.project.video == nil)
                 .opacity(store.project.video == nil ? 0.35 : 1)
-                .help("Compare: Mine plays the sound made here. Film plays only the video's own sound. Press \\ to flip.")
-            .help("The video's own sound. Click the icon to mute or restore it.")
+                .hint("Compare: Mine plays the sound made here. Film plays only the video's own sound. Press \\ to flip.")
+            .hint("The video's own sound. Click the icon to mute or restore it.")
             if store.versionList.count > 1 {
                 Rectangle().fill(Theme.line).frame(width: 1, height: 20)
                 VersionSwitch()
@@ -368,10 +401,10 @@ struct TransportBar: View {
                 .contentShape(Capsule())
             }
             .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
-            .help("What this session is mixed for. You can still export every other format from it.")
+            .hint("What this session is mixed for. You can still export every other format from it.")
             SegmentedPill(options: [(MonitorMode.stereo, "Stereo"), (MonitorMode.spatial, "Spatial")],
                           selection: store.player.monitor) { store.player.monitor = $0 }
-                .help("Spatial renders object tracks around you. Best on headphones.")
+                .hint("Spatial renders object tracks around you. Best on headphones.")
         }
         .padding(.horizontal, 16)
         .frame(height: Self.height)
@@ -412,17 +445,37 @@ struct DockPanel: View {
                     Image(systemName: "macwindow.on.rectangle").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.secondary).frame(width: 26, height: 24).contentShape(Rectangle())
                 }
                 .buttonStyle(PressStyle(scale: 0.9))
-                .help("Move this into a window of its own")
+                .hint("Move this into a window of its own")
                 Button { store.dock = nil } label: {
                     Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.secondary).frame(width: 26, height: 24).contentShape(Rectangle())
                 }
                 .buttonStyle(PressStyle(scale: 0.9))
-                .help("Close")
+                .hint("Close")
             }
             .padding(.horizontal, 10).frame(height: 34)
             Rectangle().fill(Theme.line).frame(height: 1)
             if which == "library" { LibraryView(docked: true) } else { MixerView(docked: true) }
         }
         .background(Theme.panel)
+    }
+}
+
+
+/// The picture alone, for a second screen. It is the same player, so it stays in step with the timeline.
+struct PictureWindow: View {
+    @Environment(Store.self) private var store
+    var body: some View {
+        ZStack {
+            Color.black
+            if store.project.video != nil {
+                PlayerLayerView(player: store.player.video)
+            } else {
+                Text("No video in this session yet").font(.system(size: 13)).foregroundStyle(Theme.secondary)
+            }
+        }
+        .frame(minWidth: 320, minHeight: 200)
+        .onTapGesture(count: 2) { NSApp.keyWindow?.toggleFullScreen(nil) }
+        .onAppear { store.pictureOut = true }
+        .onDisappear { store.pictureOut = false }
     }
 }

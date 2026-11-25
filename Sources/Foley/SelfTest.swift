@@ -220,6 +220,13 @@ enum SelfTest {
             downmixChecks(check)
             busChecks(check)
             cutChecks(check)
+            // A serial made for "Test Person" with the author's key checks out; one changed letter does not.
+            let serial = "MIT-VGVzdCBQZXJzb24-1houk_jxDmKLp1IoRhOCCe32E7HqEbOru7kzSIa_J8GswJf4eiX0AW6mzAic5CemSjuYgdESMmGZEBE2Gy9EAw"
+            if !serial.hasSuffix("__SIG__") {
+                var bad = Array(serial); bad[6] = bad[6] == "A" ? "B" : "A"
+                check("serial codes", License.owner(of: serial) == "Test Person" && License.owner(of: String(bad)) == nil && License.owner(of: "MIT-abc") == nil,
+                      "a real serial names its owner, a changed one is refused")
+            }
 
             // 10. Exports.
             let sem = DispatchSemaphore(value: 0)

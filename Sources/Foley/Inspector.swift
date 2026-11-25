@@ -65,7 +65,7 @@ struct SessionPanel: View {
             }
             HStack(spacing: 8) {
                 Button("Revised Cut…") { Panels.importRevision(store) }.buttonStyle(PillButtonStyle())
-                    .help("Load a new cut of this film. Sounds move with their picture; only new shots are left to do.")
+                    .hint("Load a new cut of this film. Sounds move with their picture; only new shots are left to do.")
                 Button("Replace Video…") { Panels.importVideo(store) }.buttonStyle(PillButtonStyle())
             }
             Menu {
@@ -159,7 +159,7 @@ struct ClipPanel: View {
                         .background(playing ? track.kind.color.opacity(0.35) : Color.white.opacity(0.1), in: Circle())
                 }
                 .buttonStyle(PressStyle(scale: 0.88))
-                .help(playing ? "Stop" : "Listen to this take on its own")
+                .hint(playing ? "Stop" : "Listen to this take on its own")
                 Text("Take \(i + 1)").font(.system(size: 13, weight: active ? .semibold : .regular))
                 Spacer()
                 Text(shortTime(take.duration)).font(.system(size: 11).monospacedDigit()).foregroundStyle(Theme.tertiary)
@@ -218,11 +218,11 @@ struct ClipPanel: View {
                     TimeEntry(seconds: length, placeholder: "", range: 0.5...30, width: 56) { newLength = $0 }
                 }
             }
-            .help("How long the next takes are. ElevenLabs makes sounds from half a second to 30 seconds.")
+            .hint("How long the next takes are. ElevenLabs makes sounds from half a second to 30 seconds.")
             Field(title: "Prompt influence", value: String(format: "%.0f%%", influence * 100)) {
                 Slide(value: influence, range: 0...1, tint: track.kind.color, reset: 0.3, begin: {}) { influence = ($0 * 20).rounded() / 20 }
             }
-            .help("How literally ElevenLabs follows the description. Higher is closer to the words with less variety between takes; lower is freer.")
+            .hint("How literally ElevenLabs follows the description. Higher is closer to the words with less variety between takes; lower is freer.")
         }
         HStack {
             Button("Generate \(moreCount) More") {
@@ -326,7 +326,7 @@ struct TrackPanel: View {
         Field(title: "Prompt influence", value: String(format: "%.0f%%", influence * 100)) {
             Slide(value: influence, range: 0...1, tint: track.kind.color, reset: 0.3, begin: {}) { influence = ($0 * 20).rounded() / 20 }
         }
-        .help("How literally ElevenLabs follows the description. Higher is closer to the words with less variety between takes; lower is freer.")
+        .hint("How literally ElevenLabs follows the description. Higher is closer to the words with less variety between takes; lower is freer.")
         HStack(spacing: 10) {
             Stepper("\(takes) take\(takes == 1 ? "" : "s")", value: $takes, in: 1...4).font(.system(size: 12))
             Spacer()
@@ -354,7 +354,7 @@ struct TrackPanel: View {
         SectionTitle("Mix")
         Field(title: "Volume", value: String(format: "%+.1f dB", track.volume)) { slide(\.volume, -48...12, reset: 0) }
         Field(title: "Sub (LFE)", value: track.lfeSend < 0.005 ? "Off" : String(format: "%.0f%%", track.lfeSend * 100)) { slide(\.lfeSend, 0...1, reset: 0) }
-            .help("Sends this track's low end (below 120 Hz) to the sub channel as well. Heard in the 7.1.4 and Atmos exports; stereo and headphone monitoring are unchanged.")
+            .hint("Sends this track's low end (below 120 Hz) to the sub channel as well. Heard in the 7.1.4 and Atmos exports; stereo and headphone monitoring are unchanged.")
         Menu { GroupMenuItems(track: track) } label: {
             Text(store.project.group(track.groupID).map { "Group: \($0.name)" } ?? "Add to a group")
         }
@@ -548,7 +548,7 @@ struct SpacePanel: View {
         Button("Fill Its Scenes with Ambience") { Task { await store.fillAmbience(space: space.id) } }
             .buttonStyle(PillButtonStyle(prominent: true))
             .disabled(space.ambiencePrompt.isEmpty || !store.project.scenes.contains { $0.spaceID == space.id })
-            .help("Generates a looping bed for every scene in this space, crossfaded at the scene edges")
+            .hint("Generates a looping bed for every scene in this space, crossfaded at the scene edges")
         Button("Delete Space") { store.deleteSelection() }.buttonStyle(PillButtonStyle()).padding(.top, 4)
     }
 }

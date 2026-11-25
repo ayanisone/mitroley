@@ -112,7 +112,7 @@ struct PanPad: View {
             }
             .aspectRatio(1, contentMode: .fit)
         }
-        .help("Drag to place the sound. Hold Shift for fine moves. Double-click to centre it.")
+        .hint("Drag to place the sound. Hold Shift for fine moves. Double-click to centre it.")
     }
 
     private var readouts: some View {

@@ -19,7 +19,7 @@ struct MasterMeter: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(PressStyle(scale: 0.97))
-        .help("Output level and integrated loudness. Click for the master effects rack.")
+        .hint("Output level and integrated loudness. Click for the master effects rack.")
         .popover(isPresented: $store.showMaster, arrowEdge: .top) {
             MasterPanel().environment(store)
         }
@@ -102,13 +102,13 @@ struct MasterPanel: View {
                 Spacer()
                 Toggle("", isOn: Binding(get: { e.on }, set: { v in store.mutate { $0.withEffect(e.kind) { $0.on = v } } }))
                     .toggleStyle(.switch).controlSize(.mini).labelsHidden()
-                    .help(e.on ? "Bypass" : "Switch on")
+                    .hint(e.on ? "Bypass" : "Switch on")
                 Button { store.mutate { $0.removeEffect(e.kind) } } label: {
                     Image(systemName: "xmark").font(.system(size: 9.5, weight: .bold)).foregroundStyle(Theme.secondary)
                         .frame(width: 20, height: 20).background(Color.white.opacity(0.07), in: Circle()).contentShape(Circle())
                 }
                 .buttonStyle(PressStyle(scale: 0.9))
-                .help("Remove from the rack")
+                .hint("Remove from the rack")
             }
             Text(e.kind.detail).font(.system(size: 11)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
             Group {

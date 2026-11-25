@@ -22,17 +22,20 @@ struct MixerView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView(.horizontal) {
-                    HStack(alignment: .top, spacing: 8) {
-                        ForEach(p.tracks) { t in ChannelStrip(track: t, compact: docked) }
-                        if !buses.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(alignment: .top, spacing: 8) {
+                            ForEach(p.tracks) { t in ChannelStrip(track: t, compact: docked) }
+                            if !buses.isEmpty {
+                                Rectangle().fill(Theme.line).frame(width: 1).padding(.vertical, 6)
+                                ForEach(buses) { g in BusStrip(group: g, compact: docked) }
+                            }
                             Rectangle().fill(Theme.line).frame(width: 1).padding(.vertical, 6)
-                            ForEach(buses) { g in BusStrip(group: g, compact: docked) }
+                            MasterStrip(compact: docked)
                         }
-                        Rectangle().fill(Theme.line).frame(width: 1).padding(.vertical, 6)
-                        MasterStrip(compact: docked)
+                        .frame(maxHeight: .infinity, alignment: .top)
+                        Cables(compact: docked)
                     }
                     .padding(docked ? 10 : 14)
-                    .frame(maxHeight: .infinity, alignment: .top)
                 }
             }
             if !docked {
@@ -40,7 +43,7 @@ struct MixerView: View {
                 HStack {
                     Text("\(p.tracks.count) track\(p.tracks.count == 1 ? "" : "s")\(buses.isEmpty ? "" : ", \(buses.count) bus\(buses.count == 1 ? "" : "es")")").font(.system(size: 11.5)).foregroundStyle(Theme.secondary)
                     Spacer()
-                    Text("Double-click a fader or pan to reset · right-click to type a value").font(.system(size: 11.5)).foregroundStyle(Theme.tertiary)
+                    Text("Select a track, then click a socket under a bus or the master to plug it in · double-click a fader to reset").font(.system(size: 11.5)).foregroundStyle(Theme.tertiary)
                 }
                 .padding(.horizontal, 16).frame(height: 34)
             }
@@ -86,7 +89,7 @@ private struct StripChip: View {
                 .background(on ? tint : Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
         .buttonStyle(PressStyle(scale: 0.92))
-        .help(help)
+        .hint(help)
         .accessibilityLabel(help)
         .accessibilityAddTraits(on ? .isSelected : [])
     }
@@ -127,8 +130,90 @@ private struct StripShell<Content: View>: View {
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(selected ? color.opacity(0.6) : .clear, lineWidth: 1))
         .opacity(dim ? 0.6 : 1)
     }
-    /// Fader and meter on the left, a column of controls as wide as a tall strip's rows on the right.
-    private func compactWidth(_ w: CGFloat) -> CGFloat { w - 14 + 8 + 30 + 7 + (w > stripWidth ? 17 : 5) + 14 }
+    private func compactWidth(_ w: CGFloat) -> CGFloat { stripOuter(w, compact: true) }
+}
+
+/// How wide a strip is on screen. Compact: fader and meter on the left, a column of controls as wide as a tall strip's rows on the right.
+private func stripOuter(_ w: CGFloat, compact: Bool) -> CGFloat {
+    compact ? w - 14 + 8 + 30 + 7 + (w > stripWidth ? 17 : 5) + 14 : w
+}
+
+/// The patch bay under the strips: a socket under every strip, and a cable from each track to where it plays into.
+/// Solid cables carry sound (track to bus, bus to master). Dashed ones are sidechains: the track at the arrow dips when the other is heard.
+private struct Cables: View {
+    @Environment(Store.self) private var store
+    let compact: Bool
+
+    private struct Port { let x: CGFloat; let track: UUID?; let bus: UUID?; let master: Bool }
+
+    private var ports: [Port] {
+        let p = store.project
+        let w = stripOuter(stripWidth, compact: compact)
+        var x: CGFloat = 0, out: [Port] = []
+        for t in p.tracks { out.append(Port(x: x + w / 2, track: t.id, bus: nil, master: false)); x += w + 8 }
+        if let g = p.groups, !g.isEmpty {
+            x += 9
+            for b in g { out.append(Port(x: x + w / 2, track: nil, bus: b.id, master: false)); x += w + 8 }
+        }
+        x += 9
+        out.append(Port(x: x + stripOuter(stripWidth + 12, compact: compact) / 2, track: nil, bus: nil, master: true))
+        return out
+    }
+
+    var body: some View {
+        let p = store.project
+        let ports = self.ports
+        let width = (ports.last?.x ?? 0) + stripOuter(stripWidth + 12, compact: compact) / 2
+        var selected: UUID? { if case .track(let id) = store.selection { return id } else { return nil } }
+        Canvas { ctx, size in
+            let top: CGFloat = 6
+            func x(track id: UUID?) -> CGFloat? { id.flatMap { i in ports.first { $0.track == i }?.x } }
+            func x(bus id: UUID?) -> CGFloat? { id.flatMap { i in ports.first { $0.bus == i }?.x } }
+            let master = ports.last?.x ?? 0
+            func cable(_ a: CGFloat, _ b: CGFloat, _ color: Color, strong: Bool, dashed: Bool = false) {
+                let depth = min(size.height - 3, 14 + abs(b - a) * 0.05) * (dashed ? 0.6 : 1)
+                var path = Path()
+                path.move(to: CGPoint(x: a, y: top))
+                path.addCurve(to: CGPoint(x: b, y: top), control1: CGPoint(x: a, y: top + depth * 1.25), control2: CGPoint(x: b, y: top + depth * 1.25))
+                ctx.stroke(path, with: .color(color.opacity(strong ? 0.95 : 0.3)),
+                           style: StrokeStyle(lineWidth: strong ? 2 : 1.5, lineCap: .round, dash: dashed ? [4, 4] : []))
+                if dashed {
+                    // An arrowhead at the track that dips.
+                    var head = Path()
+                    head.move(to: CGPoint(x: b, y: top + 1)); head.addLine(to: CGPoint(x: b - 4, y: top + 9)); head.addLine(to: CGPoint(x: b + 4, y: top + 9)); head.closeSubpath()
+                    ctx.fill(head, with: .color(color.opacity(strong ? 0.95 : 0.4)))
+                }
+            }
+            for t in p.tracks {
+                guard let a = x(track: t.id) else { continue }
+                let strong = selected == nil || selected == t.id
+                cable(a, x(bus: t.groupID) ?? master, t.kind.color, strong: strong)
+                if let d = t.duck {
+                    let sources = d.source.map { [$0] } ?? p.tracks.filter { $0.kind == .dialogue && $0.id != t.id }.map(\.id)
+                    for sid in sources { if let b = x(track: sid) { cable(b, a, Theme.accent, strong: strong, dashed: true) } }
+                }
+            }
+            for g in p.groups ?? [] { if let a = x(bus: g.id) { cable(a, master, Color(white: 0.78), strong: selected == nil) } }
+            for port in ports {
+                let lit = port.track != nil && port.track == selected
+                let r: CGFloat = 4
+                let rect = CGRect(x: port.x - r, y: top - r, width: r * 2, height: r * 2)
+                ctx.fill(Path(ellipseIn: rect), with: .color(Color(white: 0.09)))
+                ctx.stroke(Path(ellipseIn: rect), with: .color(lit ? Theme.accent : Color.white.opacity(port.track == nil ? 0.8 : 0.45)), lineWidth: 1.5)
+            }
+        }
+        .frame(width: width, height: 40)
+        .contentShape(Rectangle())
+        .gesture(SpatialTapGesture().onEnded { tap in
+            guard let port = ports.min(by: { abs($0.x - tap.location.x) < abs($1.x - tap.location.x) }), abs(port.x - tap.location.x) < 24 else { return }
+            if let id = port.track { store.selection = .track(id); return }
+            guard let from = selected else { store.say("Select a track first, then click the socket to plug it into."); return }
+            if port.master { store.setGroup(nil, for: [from]) }
+            else if let name = p.group(port.bus)?.name { store.setGroup(name, for: [from]) }
+        })
+        .hint("Cables show where each track plays into. Select a track, then click the socket under a bus or the master to plug it in there. A dashed cable is a sidechain: the track at the arrow dips when the other is heard.")
+        .accessibilityLabel("Routing: each track's output")
+    }
 }
 
 /// Lays a strip out: tall (controls above and below the fader) or compact (fader on the left, controls in a column beside it).
@@ -168,6 +253,7 @@ private struct ChannelStrip: View {
     let track: Track
     var compact = false
     @State private var showDuck = false
+    @State private var showRoom = false
 
     private func edit(_ change: @escaping (inout Track) -> Void) {
         store.mutate { p in if let i = p.trackIndex(track.id) { change(&p.tracks[i]) } }
@@ -191,7 +277,18 @@ private struct ChannelStrip: View {
                     }
                 }
                 .frame(width: stripWidth - 20)
-                Text(Slide.side(track.spatial ? track.position.x : track.pan)).font(.system(size: 10).monospacedDigit()).foregroundStyle(Theme.tertiary)
+                Button { showRoom.toggle() } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: track.spatial ? "cube.fill" : "cube").font(.system(size: 8.5, weight: .semibold))
+                        Text(Slide.side(track.spatial ? track.position.x : track.pan)).font(.system(size: 10).monospacedDigit())
+                    }
+                    .foregroundStyle(track.spatial ? Theme.accent : Theme.tertiary)
+                    .frame(width: stripWidth - 20, height: 13)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .hint("Room panner: place this track around and above the listener, as an object")
+                .popover(isPresented: $showRoom, arrowEdge: .top) { RoomPanel(track: track) }
             }
             .frame(height: 34)
             HStack(spacing: 6) {
@@ -214,7 +311,7 @@ private struct ChannelStrip: View {
                 StripLabel(text: track.duck == nil ? "Duck" : "Duck \(String(format: "%.0f", track.duck!.depth))", symbol: "arrow.down.to.line.compact", on: track.duck != nil)
             }
             .buttonStyle(PressStyle(scale: 0.95))
-            .help("Sidechain: dip this track while another one is heard")
+            .hint("Sidechain: dip this track while another one is heard")
             .onChange(of: store.peek) { _, v in if v == "duck", store.selection == .track(track.id) { showDuck = true; store.peek = nil } }
             .popover(isPresented: $showDuck, arrowEdge: .top) { DuckPanel(track: track) }
             // Where it is sent.
@@ -237,7 +334,7 @@ private struct ChannelStrip: View {
                 StripLabel(text: bus?.name ?? "Master", symbol: "arrow.right")
             }
             .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
-            .help("Output: straight to the master, or through a bus")
+            .hint("Output: straight to the master, or through a bus")
           }
         }
         .contentShape(Rectangle())
@@ -271,7 +368,7 @@ private struct BusStrip: View {
           } bottom: {
             Button { showSound.toggle() } label: { StripLabel(text: sound ?? "Sound", symbol: "wand.and.stars", on: sound != nil) }
                 .buttonStyle(PressStyle(scale: 0.95))
-                .help("One sound for everything on this bus. Tracks placed as objects in the room skip it.")
+                .hint("One sound for everything on this bus. Tracks placed as objects in the room skip it.")
                 .popover(isPresented: $showSound, arrowEdge: .top) {
                     PresetList(current: sound) { preset in
                         store.applyPreset(preset, toGroup: group.id)
@@ -285,8 +382,8 @@ private struct BusStrip: View {
                 Button("Remove the Bus") { store.ungroup(group.id) }
             } label: { StripLabel(text: "Bus", symbol: "ellipsis") }
             .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
-            .help("Rename or remove this bus. Removing it sends its tracks to the master.")
-            StripLabel(text: "Master", symbol: "arrow.right").opacity(0.55).help("A bus plays into the master")
+            .hint("Rename or remove this bus. Removing it sends its tracks to the master.")
+            StripLabel(text: "Master", symbol: "arrow.right").opacity(0.55).hint("A bus plays into the master")
           }
         }
         .contentShape(Rectangle())
@@ -316,6 +413,41 @@ private struct MasterStrip: View {
                 Color.clear.frame(height: rowHeight)
             }
         }
+    }
+}
+
+/// The room panner for one track: where it sits around and above the listener.
+private struct RoomPanel: View {
+    @Environment(Store.self) private var store
+    let track: Track
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Place \(track.name)").font(.system(size: 13, weight: .semibold))
+            Toggle("An object in the room", isOn: Binding(get: { track.spatial }, set: { v in
+                store.mutate { p in if let i = p.trackIndex(track.id) { p.tracks[i].spatial = v } }
+            }))
+            .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
+            if track.spatial {
+                PanPad(position: track.position, color: track.kind.color,
+                       speakers: store.project.format == .binaural ? Array(0..<12) : store.project.format.channels,
+                       begin: { store.beginGesture() }) { x, y in
+                    store.live { p in if let i = p.trackIndex(track.id) { p.tracks[i].position.x = x; p.tracks[i].position.y = y } }
+                }
+                .frame(width: 228, height: 228)
+                Field(title: "Height", value: String(format: "%.2f", track.position.z)) {
+                    Slide(value: track.position.z, range: 0...1, reset: 0, begin: { store.beginGesture() }) { v in
+                        store.live { p in if let i = p.trackIndex(track.id) { p.tracks[i].position.z = v } }
+                    }
+                }
+                if store.player.monitor == .stereo {
+                    Caption("Switch monitoring to Spatial to hear depth and height. In Stereo only left and right are heard.")
+                }
+            } else {
+                Caption("Off: the track is part of the stereo bed and only pans left and right. On: it becomes an object you place anywhere around and above the listener, and it is exported as one in the Atmos file.")
+            }
+        }
+        .padding(16)
+        .frame(width: 260)
     }
 }
 

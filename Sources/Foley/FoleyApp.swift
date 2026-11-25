@@ -130,8 +130,15 @@ struct FoleyApp: App {
                 RoomButton(menu: true)
                 Button(store.dock == "mixer" ? "Hide Mixer" : "Show Mixer") { store.toggleDock("mixer") }.keyboardShortcut("m", modifiers: [.command, .option])
                 Button(store.dock == "library" ? "Hide Library" : "Show Library") { store.toggleDock("library") }.keyboardShortcut("l", modifiers: [.command, .option])
+                WindowButton(id: "picture", title: "Picture in Its Own Window", symbol: "", key: "p", help: "", menu: true, plain: true)
                 WindowButton(id: "mixer", title: "Mixer in Its Own Window", symbol: "", key: "m", help: "", menu: true, plain: true)
                 WindowButton(id: "library", title: "Library in Its Own Window", symbol: "", key: "l", help: "", menu: true, plain: true)
+                Menu("Theme") {
+                    ForEach(Palette.all) { p in
+                        Toggle(p.name, isOn: Binding(get: { store.theme == p.id }, set: { if $0 { store.theme = p.id } }))
+                    }
+                }
+                Toggle("Hint Box", isOn: Binding(get: { UserDefaults.standard.object(forKey: "hintBox") as? Bool ?? true }, set: { UserDefaults.standard.set($0, forKey: "hintBox") }))
                 Button("Check the Mix at the Cuts…") { store.showCutCheck = true }.keyboardShortcut("k", modifiers: [.command, .option])
                 Divider()
                 Button("Duplicate Clip") { store.duplicateClip() }.keyboardShortcut("d")
@@ -172,9 +179,16 @@ struct FoleyApp: App {
         }
         .defaultSize(width: 1000, height: 680)
 
+        Window("Picture", id: "picture") {
+            PictureWindow()
+                .environment(store)
+                .preferredColorScheme(.dark)
+        }
+        .defaultSize(width: 960, height: 560)
+
         Window("Mixer", id: "mixer") {
             MixerView()
-                .frame(minWidth: 520, minHeight: 440)
+                .frame(minWidth: 520, minHeight: 480)
                 .environment(store)
                 .preferredColorScheme(.dark)
                 .tint(Theme.accent)
@@ -338,6 +352,18 @@ enum Panels {
                 if stems { try await store.splitOriginalSound() }
                 else { store.selection = .track(try await store.addOriginalSound()) }
             } catch { store.say(error.localizedDescription, error: true) }
+        }
+    }
+
+    static func clipStems(_ store: Store, _ id: UUID) {
+        let alert = NSAlert()
+        alert.messageText = "Split this sound into stems?"
+        alert.informativeText = "ElevenLabs separates it into voice, drums, bass, guitar, piano and other, each on its own track. This uses credits and takes a minute or two. It is made for music: sound effects mostly end up in “other”."
+        alert.addButton(withTitle: "Split")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        Task {
+            do { try await store.splitClipIntoStems(id) } catch { store.say(error.localizedDescription, error: true) }
         }
     }
 

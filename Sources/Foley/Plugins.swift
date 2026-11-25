@@ -198,16 +198,16 @@ struct PluginSection: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(PressStyle(scale: 0.98))
-                .help("Open the plug-in's window")
+                .hint("Open the plug-in's window")
                 Toggle("", isOn: Binding(get: { !slot.bypass }, set: { v in store.setPluginBypass(slot.id, on: track.id, !v) }))
                     .toggleStyle(.switch).controlSize(.mini).labelsHidden()
-                    .help(slot.bypass ? "Switch on" : "Bypass")
+                    .hint(slot.bypass ? "Switch on" : "Bypass")
                 Button { store.removePlugin(slot.id, from: track.id) } label: {
                     Image(systemName: "xmark").font(.system(size: 9.5, weight: .bold)).foregroundStyle(Theme.secondary)
                         .frame(width: 20, height: 20).background(Color.white.opacity(0.07), in: Circle()).contentShape(Circle())
                 }
                 .buttonStyle(PressStyle(scale: 0.9))
-                .help("Remove from the track")
+                .hint("Remove from the track")
             }
             .padding(.horizontal, 10).padding(.vertical, 7)
             .background(Theme.raised, in: RoundedRectangle(cornerRadius: 9, style: .continuous))

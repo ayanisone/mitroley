@@ -74,7 +74,7 @@ struct ClaudePanel: View {
                             .frame(width: 26, height: 26).background(Color.white.opacity(0.05), in: Circle()).contentShape(Circle())
                     }
                     .buttonStyle(PressStyle(scale: 0.9))
-                    .help("Add another agent, to work on something else at the same time. Each can use a different model.")
+                    .hint("Add another agent, to work on something else at the same time. Each can use a different model.")
                 }
                 Spacer(minLength: 0)
             }
@@ -183,7 +183,7 @@ struct ClaudePanel: View {
                             .contentShape(Capsule())
                         }
                         .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
-                        .help("How hard Claude thinks before it acts, and which model it uses. Applies from the next message.")
+                        .hint("How hard Claude thinks before it acts, and which model it uses. Applies from the next message.")
                     }
                     Button { attach() } label: {
                         Image(systemName: "paperclip")
@@ -191,7 +191,7 @@ struct ClaudePanel: View {
                             .frame(width: 30, height: 30).background(Color.white.opacity(0.07), in: Circle()).contentShape(Circle())
                     }
                     .buttonStyle(PressStyle(scale: 0.92))
-                    .help("Attach files for Claude to read: notes, a brief, a script, pictures, a PDF. You can also drop them on this panel.")
+                    .hint("Attach files for Claude to read: notes, a brief, a script, pictures, a PDF. You can also drop them on this panel.")
                     Button { dictation.toggle(typed: input) { input = $0 } } label: {
                         Image(systemName: dictation.listening ? "mic.fill" : "mic")
                             .font(.system(size: 13, weight: .semibold))
@@ -201,10 +201,10 @@ struct ClaudePanel: View {
                             .contentShape(Circle())
                     }
                     .buttonStyle(PressStyle(scale: 0.92))
-                    .help(dictation.listening ? "Stop listening" : "Speak instead of typing")
+                    .hint(dictation.listening ? "Stop listening" : "Speak instead of typing")
                     Spacer()
                     Text(dictation.listening ? "Listening" : "Return to send").font(.system(size: 11)).foregroundStyle(Theme.tertiary)
-                        .help("Return sends. Shift-Return starts a new line.")
+                        .hint("Return sends. Shift-Return starts a new line.")
                 }
             }
             .padding(16)
@@ -341,7 +341,7 @@ private struct EntryRow: View {
                             .frame(width: 22, height: 22).background(Color.white.opacity(0.08), in: Circle()).contentShape(Circle())
                     }
                     .buttonStyle(PressStyle(scale: 0.9))
-                    .help("Change this message and ask again from here")
+                    .hint("Change this message and ask again from here")
                 }
                 VStack(alignment: .trailing, spacing: 4) {
                     Text(entry.text)
@@ -394,6 +394,8 @@ struct SettingsSheet: View {
     @AppStorage("autosaveSeconds") private var autosave = 0.0
     @AppStorage("hoverHelp") private var hoverHelp = true
     @AppStorage("startupSound") private var startupSound = true
+    @AppStorage("movingBackdrop") private var movingBackdrop = true
+    @AppStorage("hintBox") private var hintBox = true
     @AppStorage("voiceAgentVoice") private var helperVoice = ""
     @AppStorage("voiceAgentVoiceName") private var helperVoiceName = ""
     @AppStorage("voiceAgentStyle") private var helperStyle = ""
@@ -479,6 +481,12 @@ struct SettingsSheet: View {
                 Text("Every 10 minutes").tag(600.0)
             }
             Toggle("Play a sound when mitroley opens", isOn: $startupSound)
+                .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
+            Text("Theme").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.secondary)
+            ThemePicker()
+            Toggle("Wind in the backdrop behind the picture", isOn: $movingBackdrop)
+                .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
+            Toggle("Hint box in the corner: says what the pointer is on", isOn: $hintBox)
                 .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
             Toggle("Show a hint when the pointer rests on a button", isOn: $hoverHelp)
                 .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
@@ -607,7 +615,7 @@ struct ExportSheet: View {
                     .onChange(of: name) { _, _ in result = nil; failure = nil }
                 Text(ending).font(.system(size: 11.5).monospacedDigit()).foregroundStyle(Theme.secondary)
             }
-            .help("The name the export is saved under. Leave it empty for the usual name.")
+            .hint("The name the export is saved under. Leave it empty for the usual name.")
             if result == nil, FileManager.default.fileExists(atPath: target.path) {
                 Text("A file with this name is already there and will be replaced.")
                     .font(.system(size: 11.5)).foregroundStyle(Theme.secondary)

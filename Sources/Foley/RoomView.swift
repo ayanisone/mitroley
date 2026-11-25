@@ -91,7 +91,7 @@ struct RoomView: View {
                                 .contentShape(Circle())
                         }
                         .buttonStyle(PressStyle(scale: 0.92))
-                        .help("Reset the view (double-click the room)")
+                        .hint("Reset the view (double-click the room)")
                         Menu {
                             ForEach(MixFormat.allCases) { f in
                                 Toggle(isOn: Binding(get: { f == store.project.format }, set: { if $0 { store.setFormat(f) } })) {
@@ -109,7 +109,7 @@ struct RoomView: View {
                             .background(Color.white.opacity(0.08), in: Capsule())
                         }
                         .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
-                        .help("What the session is mixed for. It decides which speakers and meters are shown here: Stereo and Binaural have two, 5.1 has six, 7.1.4 has twelve.")
+                        .hint("What the session is mixed for. It decides which speakers and meters are shown here: Stereo and Binaural have two, 5.1 has six, 7.1.4 has twelve.")
                         SegmentedPill(options: [(RoomScene.Camera.threeQuarter, "3D"), (.front, "Front"), (.top, "Top"), (.side, "Side")],
                                       selection: view, segmentWidth: 52, height: 24, size: 11.5) { view = $0; viewTick += 1 }
                         Button { pinned.toggle() } label: {
@@ -120,7 +120,7 @@ struct RoomView: View {
                                 .contentShape(Circle())
                         }
                         .buttonStyle(PressStyle(scale: 0.92))
-                        .help("Keep the Room in front of the main window")
+                        .hint("Keep the Room in front of the main window")
                     }
                     .padding(12)
                 }
@@ -201,7 +201,7 @@ struct RoomStrip: View {
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(PressStyle(scale: 0.97))
-                            .help(String(format: "Left–right %+.2f, depth %+.2f, height %.2f", d.now.x, d.now.y, d.now.z))
+                            .hint(String(format: "Left–right %+.2f, depth %+.2f, height %.2f", d.now.x, d.now.y, d.now.z))
                         }
                     }
                     .padding(Self.pad)
@@ -288,7 +288,7 @@ struct ChannelMeters: View {
                 else if t.timeIntervalSince(heldAt[c]) > 1.2 { holds[c] = max(now[c], holds[c] - 0.02) }
             }
         }
-        .help("How much signal each speaker of this session's format is getting, in dB below full scale, worked out with the same panner and fold-downs the exports use. The small bar is the highest level of the last second or so.")
+        .hint("How much signal each speaker of this session's format is getting, in dB below full scale, worked out with the same panner and fold-downs the exports use. The small bar is the highest level of the last second or so.")
     }
 
     private func meter(_ c: Int, width: CGFloat, height h: CGFloat) -> some View {
@@ -343,7 +343,7 @@ struct RoomLoudness: View {
             Button(measuring ? "Measuring" : "Measure full mix") { measure() }
                 .buttonStyle(PillButtonStyle()).disabled(measuring)
                 .padding(.top, 4)
-                .help("Renders the session and reads the loudness of the 7.1.4 (what an Atmos renderer plays), the 5.1 and the stereo versions. Takes about as long as an export.")
+                .hint("Renders the session and reads the loudness of the 7.1.4 (what an Atmos renderer plays), the 5.1 and the stereo versions. Takes about as long as an export.")
             if let problem { Text(problem).font(.system(size: 10.5)).foregroundStyle(Theme.danger).lineLimit(2) }
             ForEach(rows) { r in
                 HStack(spacing: 6) {
@@ -354,7 +354,7 @@ struct RoomLoudness: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .help("Integrated loudness of what you are hearing, in LUFS, and its true peak. Momentary and short-term readings are in the master effects' loudness meter.")
+        .hint("Integrated loudness of what you are hearing, in LUFS, and its true peak. Momentary and short-term readings are in the master effects' loudness meter.")
     }
 
     private func measure() {
@@ -640,7 +640,7 @@ struct RoomButton: View {
             Button("Show Room") { openWindow(id: "room") }.keyboardShortcut("r")
         } else {
             Button { openWindow(id: "room") } label: { Image(systemName: "cube.transparent") }
-                .help("Room: see where every spatial object is and how it moves (⌘R)")
+                .hint("Room: see where every spatial object is and how it moves (⌘R)")
                 .onAppear { if CommandLine.arguments.contains("--room") { openWindow(id: "room") } }
         }
     }
@@ -663,7 +663,7 @@ struct WindowButton: View {
         } else if menu {
             Button("Show \(title)") { openWindow(id: id) }.keyboardShortcut(key, modifiers: [.command, .option])
         } else {
-            Button { openWindow(id: id) } label: { Image(systemName: symbol) }.help(help)
+            Button { openWindow(id: id) } label: { Image(systemName: symbol) }.hint(help)
         }
     }
 }

@@ -175,7 +175,7 @@ private struct ToolColumn: View {
                         // Under the lens the icon swells a little, as it would through a drop of water.
                         .scaleEffect(i == under ? (pressed ? 1.3 : 1.16) : 1)
                         .frame(width: cell, height: cell)
-                        .help(t.help)
+                        .hint(t.help)
                         .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.7), value: under)
                         .animation(.spring(response: 0.25, dampingFraction: 0.8), value: pressed)
                 }

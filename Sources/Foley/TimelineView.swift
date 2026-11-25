@@ -165,7 +165,7 @@ struct TimelineCorner: View {
             HStack(spacing: 8) {
                 SegmentedPill(options: [(EditMode.slip, "Slip"), (EditMode.snap, "Snap"), (EditMode.grid, "Grid")],
                               selection: store.editMode, segmentWidth: 50, height: 24, size: 11.5) { store.editMode = $0 }
-                    .help("Slip: clips move freely. Snap: clips pull to scenes, other clips and the playhead. Grid: clips lock to the time grid. Hold ⌘ while dragging to move freely in any mode.")
+                    .hint("Slip: clips move freely. Snap: clips pull to scenes, other clips and the playhead. Grid: clips lock to the time grid. Hold ⌘ while dragging to move freely in any mode.")
                 Spacer(minLength: 0)
                 Menu {
                     Toggle("Scene Lines", isOn: Binding(get: { store.showSceneGrid }, set: { store.showSceneGrid = $0 }))
@@ -186,7 +186,7 @@ struct TimelineCorner: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .help("Grid lines, grid size, zoom and track height")
+                .hint("Grid lines, grid size, zoom and track height")
             }
             .padding(.horizontal, 12)
             .frame(height: Metrics.ruler + Metrics.film)
@@ -197,7 +197,7 @@ struct TimelineCorner: View {
                     Image(systemName: "scissors").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.secondary)
                 }
                 .buttonStyle(PressStyle(scale: 0.88))
-                .help("Split the scene at the playhead (⌘B)")
+                .hint("Split the scene at the playhead (⌘B)")
             }
             .padding(.horizontal, 12)
             .frame(height: Metrics.scene)
@@ -304,11 +304,11 @@ struct TrackHeader: View {
                             .font(.system(size: 12.5, weight: .semibold))
                             .lineLimit(1)
                             .onTapGesture(count: 2) { renaming = true }
-                            .help("Double-click to rename")
+                            .hint("Double-click to rename")
                     }
                     if track.spatial {
                         Image(systemName: "move.3d").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.tertiary)
-                            .help("Spatial object")
+                            .hint("Spatial object")
                     }
                     Spacer(minLength: 2)
                     ChipToggle(label: "M", on: track.mute, tint: Theme.danger) { edit { $0.mute.toggle() } }
@@ -327,7 +327,7 @@ struct TrackHeader: View {
                         }
                     }
                     .frame(width: 46)
-                    .help("Pan: \(panLabel). Double-click to centre.")
+                    .hint("Pan: \(panLabel). Double-click to centre.")
                     TrackMeter(id: track.id, color: track.kind.color)
                 }
             }
@@ -555,7 +555,7 @@ struct RulerView: View {
                 }
                 drag = nil
             })
-        .help("Drag to move the playhead. ⌘-click twice, or Shift-drag, to set a loop. Drag a loop edge to resize it, ⌥-drag to move it.")
+        .hint("Drag to move the playhead. ⌘-click twice, or Shift-drag, to set a loop. Drag a loop edge to resize it, ⌥-drag to move it.")
         .contextMenu {
             Button("Set Loop Start Here") { setEdge(time(pointer.x), start: true) }
             Button("Set Loop End Here") { setEdge(time(pointer.x), start: false) }
@@ -917,7 +917,7 @@ struct CrossfadeView: View {
             case .ended: NSCursor.arrow.set()
             }
         }
-        .help("Crossfade: drag an edge to change its length, drag the middle to move it")
+        .hint("Crossfade: drag an edge to change its length, drag the middle to move it")
         .offset(x: CGFloat(fade.start * pps), y: 4)
         .contextMenu {
             Menu("Shape") {
@@ -1077,6 +1077,7 @@ struct ClipView: View {
             Button("Split at Playhead") { store.splitClip(clip.id) }
             Button(clip.muted == true ? "Unmute Clip" : "Mute Clip") { store.toggleClipMute(clip.id) }
             Button("Download Sound…") { store.downloadClipAsking(clip.id) }.disabled(clip.take == nil)
+            Button("Split into Stems…") { Panels.clipStems(store, clip.id) }.disabled(clip.take == nil)
             Button("Crossfade with Neighbour") { store.crossfade(clip.id) }
                 .disabled(track.crossfadePartner(of: clip.id) == nil)
             Menu("Fade In") {
@@ -1528,7 +1529,7 @@ struct AutomationLane: View {
                             }
                         }
                     }
-                    .help(param.format(k.value))
+                    .hint(param.format(k.value))
             }
         }
         .frame(height: Metrics.lane)

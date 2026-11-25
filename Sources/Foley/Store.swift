@@ -94,6 +94,10 @@ final class Store {
     let player = Player()
     var showDub = false
     var showCutCheck = false
+    /// The look: a palette's id. Remembered between launches.
+    var theme: String = Theme.current.id { didSet { Theme.current = Palette.named(theme); UserDefaults.standard.set(theme, forKey: "theme") } }
+    /// The picture is in a window of its own (for a second screen).
+    var pictureOut = false
     /// Asks a small panel to open itself: "presets" or "duck", for the selected track. Set by the voice helper.
     var peek: String?
     /// What is open under the timeline: "mixer", "library" or nothing. Remembered between launches.

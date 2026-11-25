@@ -550,7 +550,7 @@ private struct LibraryRow: View {
             }
             Spacer(minLength: 6)
             if let note = item.note { tag(note) }
-            tag(item.shape.title).help(item.shape.about)
+            tag(item.shape.title).hint(item.shape.about)
             tag(item.tone.title)
             Text(shortTime(item.duration)).font(.system(size: 11).monospacedDigit()).foregroundStyle(Theme.secondary).frame(width: 52, alignment: .trailing)
             Button { store.place(item) } label: {
@@ -558,7 +558,7 @@ private struct LibraryRow: View {
                     .frame(width: 22, height: 22).background(Color.white.opacity(0.08), in: Circle()).contentShape(Circle())
             }
             .buttonStyle(PressStyle(scale: 0.9))
-            .help("Place at the playhead, on the selected track")
+            .hint("Place at the playhead, on the selected track")
         }
         .padding(.horizontal, 10).frame(height: 40)
         .background(picked ? Theme.accent.opacity(0.14) : Theme.raised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
