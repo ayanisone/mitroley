@@ -355,11 +355,6 @@ struct Cables: View {
                 // Fine lines, as on a patch diagram: only the cable in question is bright, and only it casts a shadow.
                 if lit { ctx.stroke(path, with: .color(.black.opacity(0.4)), style: StrokeStyle(lineWidth: wide + 1.9, lineCap: .round, dash: dots ? dash : [])) }
                 ctx.stroke(path, with: shading, style: StrokeStyle(lineWidth: wide, lineCap: .round, lineJoin: .round, dash: dash))
-                if l.dashed {
-                    // A sidechain ends in a small bead under the port it listens at, clear of the port's own arrow.
-                    let bead = CGRect(x: b.x - 2.2, y: b.y + 7.5, width: 4.4, height: 4.4)
-                    ctx.fill(Path(ellipseIn: bead), with: .color(l.color.opacity(lit ? 0.95 : (l.strong ? 0.6 : 0.25))))
-                }
                 // Where the hand has it.
                 if holding?.key == l.key, target == nil {
                     let grip = CGRect(x: m.x - 3.5, y: m.y - 3.5, width: 7, height: 7)

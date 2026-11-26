@@ -394,7 +394,6 @@ struct SettingsSheet: View {
     @AppStorage("autosaveSeconds") private var autosave = 0.0
     @AppStorage("hoverHelp") private var hoverHelp = true
     @AppStorage("startupSound") private var startupSound = true
-    @AppStorage("motionLevel") private var motionLevel = MotionLevel.auto.rawValue
     @AppStorage("hintBox") private var hintBox = true
     @AppStorage("mixerStyle") private var mixerStyle = "console"
     @AppStorage("cableLook") private var cableLook = 0
@@ -502,10 +501,10 @@ struct SettingsSheet: View {
                 Text("Dotted").tag(1)
                 Text("Flat colour (as before)").tag(2)
             }
-            Picker("Motion", selection: $motionLevel) {
-                ForEach(MotionLevel.allCases) { m in Text(m.title).tag(m.rawValue) }
+            Picker("Motion", selection: Binding(get: { MotionLevel.Choice.shared.level }, set: { MotionLevel.Choice.shared.level = $0 })) {
+                ForEach(MotionLevel.allCases) { m in Text(m.title).tag(m) }
             }
-            Caption((MotionLevel(rawValue: motionLevel) ?? .auto).about + (motionLevel == "auto" ? " Right now: \(MotionLevel.automatic.title.lowercased())." : ""))
+            Caption(MotionLevel.Choice.shared.level.about + (MotionLevel.Choice.shared.level == .auto ? " Right now: \(MotionLevel.automatic.title.lowercased())." : ""))
             Toggle("The picture reacts to the pointer (experimental)", isOn: $backdropPointer)
                 .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
             Toggle("Taps in the trackpad: at 0 dB, a knob's centre, a plug finding a jack", isOn: $haptics)

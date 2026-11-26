@@ -142,7 +142,7 @@ struct FoleyApp: App {
                 }
                 Menu("Motion") {
                     ForEach(MotionLevel.allCases) { m in
-                        Toggle(m.title, isOn: Binding(get: { MotionLevel.chosen == m }, set: { if $0 { UserDefaults.standard.set(m.rawValue, forKey: "motionLevel") } }))
+                        Toggle(m.title, isOn: Binding(get: { MotionLevel.Choice.shared.level == m }, set: { if $0 { MotionLevel.Choice.shared.level = m; store.say("Motion · \(m.title)") } }))
                     }
                 }
                 Toggle("Hint Box", isOn: Binding(get: { UserDefaults.standard.object(forKey: "hintBox") as? Bool ?? true }, set: { UserDefaults.standard.set($0, forKey: "hintBox") }))

@@ -248,6 +248,26 @@ enum SelfTest {
         } catch {
             check("render", false, error.localizedDescription)
         }
+        // Opening another session after the app has sat idle: the engine is paused by then, and the graph is rebuilt for
+        // a session of a different shape. This used to crash inside AVAudioEngine.
+        do {
+            let g = try MixGraph(offline: false)
+            var one = Project()
+            one.tracks = [Track(name: "A", kind: .fx), Track(name: "B", kind: .foley)]
+            _ = g.rebuildIfNeeded(one)
+            if (try? g.engine.start()) != nil {
+                g.engine.pause()
+                var two = Project()
+                two.tracks = [Track(name: "C", kind: .ambience), Track(name: "D", kind: .fx), Track(name: "E", kind: .music)]
+                _ = g.rebuildIfNeeded(two)
+                check("rebuild after idle", g.tracks.count >= 3, "a paused engine is rebuilt for another session without falling over")
+                g.engine.stop()
+            } else {
+                print("SKIP  rebuild after idle — no sound output on this Mac to start the engine with")
+            }
+        } catch {
+            check("rebuild after idle", false, error.localizedDescription)
+        }
         print(failures == 0 ? "ALL PASSED" : "\(failures) FAILED")
         return failures == 0 ? 0 : 1
     }

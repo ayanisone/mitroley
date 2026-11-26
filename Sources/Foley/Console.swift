@@ -109,14 +109,17 @@ private struct ConsoleShell<Content: View>: View {
         VStack(spacing: 5) {
             VStack(spacing: 0) {
                 Rectangle().fill(color.opacity(dim ? 0.35 : 0.85)).frame(height: 2)
-                HStack(spacing: 3) {
-                    if !number.isEmpty {
-                        Text(number).font(.system(size: 8.5, weight: .medium).monospacedDigit()).foregroundStyle(Theme.tertiary)
+                // The name sits in the middle of its strip, the same on a track, a bus and the master. The track's number is
+                // tucked into the left corner instead of sitting beside the name, where it pushed the name off centre.
+                Text(name).font(.system(size: 10.5, weight: .semibold)).lineLimit(1).truncationMode(.tail)
+                    .padding(.horizontal, number.isEmpty ? 5 : 13)
+                    .frame(height: 20).frame(maxWidth: .infinity)
+                    .overlay(alignment: .leading) {
+                        if !number.isEmpty {
+                            Text(number).font(.system(size: 8.5, weight: .medium).monospacedDigit()).foregroundStyle(Theme.tertiary)
+                                .padding(.leading, 5)
+                        }
                     }
-                    Text(name).font(.system(size: 10.5, weight: .semibold)).lineLimit(1).truncationMode(.tail)
-                }
-                .padding(.horizontal, 4)
-                .frame(height: 20).frame(maxWidth: .infinity)
             }
             .background(selected ? color.opacity(0.22) : Color.black.opacity(0.2))
             content

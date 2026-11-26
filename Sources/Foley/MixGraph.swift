@@ -261,19 +261,24 @@ final class MixGraph {
             return false
         }
         let wasRunning = engine.isRunning
-        if wasRunning { engine.stop() }
+        // Stopped outright before anything is taken out, running or not. After twenty idle seconds the engine is only
+        // paused: it reports "not running" but its render graph is still set up, and pulling nodes out of a paused
+        // engine crashed inside AVAudioEngine (opening another session after the app had sat idle).
+        engine.stop()
+        // Only nodes that are still in this engine; asking it to remove one it does not hold is another way to fall over.
+        func out(_ n: AVAudioNode) { if n.engine === engine { engine.detach(n) } }
         for t in tracks {
-            for n in [t.source, t.eq, t.dryStereo, t.dryMono] as [AVAudioNode] { engine.detach(n) }
-            for s in t.sends.values { engine.detach(s) }
-            for p in t.plugins { engine.detach(p.unit) }
+            for n in [t.source, t.eq, t.dryStereo, t.dryMono] as [AVAudioNode] { out(n) }
+            for s in t.sends.values { out(s) }
+            for p in t.plugins { out(p.unit) }
         }
         for s in spaces {
-            for n in [s.input, s.delay, s.reverb, s.eq] as [AVAudioNode] { engine.detach(n) }
-            if let c = s.convolver { engine.detach(c) }
+            for n in [s.input, s.delay, s.reverb, s.eq] as [AVAudioNode] { out(n) }
+            if let c = s.convolver { out(c) }
         }
         for b in buses {
-            engine.detach(b.input)
-            for u in b.plugins { engine.detach(u) }
+            out(b.input)
+            for u in b.plugins { out(u) }
         }
         buses = []
         for g in p.groups ?? [] {

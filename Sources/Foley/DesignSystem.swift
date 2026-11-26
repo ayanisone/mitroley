@@ -133,9 +133,9 @@ struct SegmentedPill<T: Hashable>: View {
         ZStack(alignment: .leading) {
             Capsule().fill(Color.white.opacity(pressed ? 0.24 : 0.18))
                 // A little smaller than its segment, so there is the same even margin of the trough all round it.
-                .frame(width: segmentWidth - 3, height: height - 3)
+                .frame(width: segmentWidth - 4, height: height - 4)
                 .scaleEffect(pressed ? 0.96 : 1)
-                .offset(x: x - segmentWidth / 2 + 1.5)
+                .offset(x: x - segmentWidth / 2 + 2)
                 .animation(drag == nil ? (reduceMotion ? .easeOut(duration: 0.12) : .spring(response: 0.3, dampingFraction: 0.8)) : nil, value: x)
                 .animation(.spring(response: 0.22, dampingFraction: 0.85), value: pressed)
             HStack(spacing: 0) {

@@ -76,7 +76,15 @@ enum MotionLevel: String, CaseIterable, Identifiable {
         case .still: "The picture hangs still. Nothing is redrawn."
         }
     }
-    static var chosen: MotionLevel { MotionLevel(rawValue: UserDefaults.standard.string(forKey: "motionLevel") ?? "") ?? .auto }
+    /// The level chosen, held where every view that shows or uses it is told at once: the menu's tick, the Settings
+    /// picker and the backdrop itself all change in the same moment.
+    @Observable final class Choice {
+        static let shared = Choice()
+        var level = MotionLevel(rawValue: UserDefaults.standard.string(forKey: "motionLevel") ?? "") ?? .auto {
+            didSet { UserDefaults.standard.set(level.rawValue, forKey: "motionLevel") }
+        }
+    }
+    static var chosen: MotionLevel { Choice.shared.level }
 
     /// What Automatic comes to on this Mac, right now.
     static var automatic: MotionLevel {
@@ -98,6 +106,8 @@ struct FlagView: NSViewRepresentable {
     let wind: Bool
     /// The film is playing: the flag moves at half rate and leaves the machine to the sound.
     var playing = false
+    /// The motion level chosen. Passed in so a change of level reaches the view at once, even when nothing else changed.
+    var choice = MotionLevel.auto
 
     func makeCoordinator() -> Renderer { Renderer() }
 
@@ -140,6 +150,7 @@ struct FlagView: NSViewRepresentable {
         private weak var view: MTKView?
         /// Smooth or light; looked at again every couple of seconds, since power and heat change under Automatic.
         var level = MotionLevel.smooth
+        var lastChoice = MotionLevel.auto
         private var frames = 0
         // The pointer as the cloth feels it: where it is, a point that trails behind it, and how hard it is moving.
         private var mouse = SIMD2<Float>(-9, -9), wake = SIMD2<Float>(-9, -9)
@@ -260,7 +271,10 @@ struct FlagView: NSViewRepresentable {
                   let buffer = queue.makeCommandBuffer(), let enc = buffer.makeRenderCommandEncoder(descriptor: pass) else { return }
             let now = CACurrentMediaTime()
             frames += 1
-            if frames % 120 == 0 {
+            // A new choice takes hold on the very next frame; what Automatic comes to is looked at again now and then.
+            let choice = MotionLevel.chosen
+            if choice != lastChoice || frames % 120 == 0 {
+                lastChoice = choice
                 level = MotionLevel.current
                 let rate = level == .light ? 30 : 60
                 if view.preferredFramesPerSecond != rate { view.preferredFramesPerSecond = rate }
@@ -370,11 +384,11 @@ struct FlagView: NSViewRepresentable {
 /// The flag, with the theme, the wind switch and the Mac's reduce-motion setting read for it.
 struct Backdrop: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @AppStorage("motionLevel") private var level = MotionLevel.auto.rawValue
     @AppStorage("backdropStamp") private var stamp = 0
     @Environment(Store.self) private var store
     var body: some View {
-        FlagView(theme: Theme.current, stamp: stamp, wind: MotionLevel.current != .still && !reduceMotion, playing: store.player.isPlaying)
+        // Read here so the flag is told the moment the level changes.
+        FlagView(theme: Theme.current, stamp: stamp, wind: MotionLevel.current != .still && !reduceMotion, playing: store.player.isPlaying, choice: MotionLevel.Choice.shared.level)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
     }

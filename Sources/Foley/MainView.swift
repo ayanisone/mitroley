@@ -169,7 +169,7 @@ struct MainView: View {
 }
 
 /// The edge between two panes, made to be taken hold of: a band 16 pt deep that sits above both panes, a small grip that
-/// is always faintly there to show where to grab, and a line that lights along the whole edge under the pointer. The drag
+/// is always faintly there to show where to grab and brightens under the pointer. Nothing else lights up. The drag
 /// is measured against the window, so the edge follows the hand exactly.
 struct PaneHandle: View {
     enum Axis { case rows, columns }
@@ -185,9 +185,6 @@ struct PaneHandle: View {
         let lit = hot || held, rows = axis == .rows
         ZStack {
             Color.clear
-            Capsule().fill(Theme.accent.opacity(held ? 0.9 : 0.5))
-                .frame(width: rows ? nil : 2.5, height: rows ? 2.5 : nil)
-                .opacity(lit ? 1 : 0)
             Capsule().fill(Color.white.opacity(lit ? 0.95 : 0.3))
                 .frame(width: rows ? 40 : 4, height: rows ? 4 : 40)
                 .shadow(color: .black.opacity(0.4), radius: 1.5, y: 0.5)
@@ -535,12 +532,12 @@ struct DockPanel: View {
         let which = store.dock ?? "mixer"
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                SegmentedPill(options: [(value: "mixer", label: "Mixer"), (value: "library", label: "Library")], selection: which, segmentWidth: 70, height: 24, size: 11.5) { store.dock = $0 }
+                SegmentedPill(options: [(value: "mixer", label: "Mixer"), (value: "library", label: "Library")], selection: which, segmentWidth: 66, height: 21, size: 11.5) { store.dock = $0 }
                 Spacer()
                 if which == "mixer" {
                     Button { mixerStyle = mixerStyle == "console" ? "classic" : "console" } label: {
                         Text(mixerStyle == "console" ? "Console" : "Cards").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.secondary)
-                            .padding(.horizontal, 8).frame(height: 22)
+                            .padding(.horizontal, 9).frame(height: 24)
                             .background(Theme.raised, in: Capsule()).contentShape(Capsule())
                     }
                     .buttonStyle(PressStyle(scale: 0.96))
@@ -557,7 +554,8 @@ struct DockPanel: View {
                 .buttonStyle(PressStyle(scale: 0.9))
                 .hint("Close")
             }
-            .padding(.horizontal, 10).frame(height: 34)
+            // The switcher is built like the Stereo and Spatial one: the same 6 pt of trough round its highlight.
+            .padding(.horizontal, 10).frame(height: 38)
             Rectangle().fill(Theme.line).frame(height: 1)
             if which == "library" { LibraryView(docked: true) } else { MixerView(docked: true) }
         }
