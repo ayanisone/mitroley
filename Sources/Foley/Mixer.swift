@@ -209,6 +209,8 @@ struct Cables: View {
     let compact: Bool
     /// Laid out under the console's strips instead of the cards.
     var console = false
+    /// Read so the cables are redrawn when the console's strips are resized.
+    @AppStorage("consoleStrip") private var consoleStrip = 64.0
     @State private var sim = CableSim()
     /// A cable being dragged: the socket it comes from and where the pointer has it.
     @State private var pulling: (from: Int, at: CGPoint)?
@@ -245,6 +247,7 @@ struct Cables: View {
 
     var body: some View {
         let p = store.project
+        let _ = consoleStrip
         let ports = self.ports
         let width = (ports.last?.x ?? 0) + geometry.master / 2
         var selected: UUID? { if case .track(let id) = store.selection { return id } else { return nil } }

@@ -282,7 +282,11 @@ struct TrackHeader: View {
     var body: some View {
         let selected = store.selection == .track(track.id)
         HStack(spacing: 9) {
-            RoundedRectangle(cornerRadius: 1.5).fill(track.kind.color).frame(width: 3, height: 40)
+            // The track's colour as a light that falls off down the bar, with a soft glow, instead of one flat stripe.
+            Capsule()
+                .fill(LinearGradient(colors: [track.kind.color, track.kind.color.opacity(0.22)], startPoint: .top, endPoint: .bottom))
+                .frame(width: 3, height: 40)
+                .shadow(color: track.kind.color.opacity(0.45), radius: 4, x: 0, y: -2)
                 .padding(.leading, track.groupID == nil ? 0 : 9)
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {

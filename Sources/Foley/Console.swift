@@ -6,8 +6,10 @@ import SwiftUI
 /// long-throw fader with a scale beside it and a segmented meter. Colour is kept for what carries meaning: the track's
 /// own stripe, a lit key, the meter. The cards it replaces are still there (Settings › Mixer).
 enum ConsoleMetrics {
-    static let strip: CGFloat = 64
-    static let master: CGFloat = 84
+    /// How wide a strip is. Drag the line between two strips to change it; every strip follows.
+    static var strip: CGFloat { CGFloat(min(maxStrip, max(minStrip, UserDefaults.standard.object(forKey: "consoleStrip") as? Double ?? 64))) }
+    static var master: CGFloat { strip + 20 }
+    static let minStrip = 56.0, maxStrip = 150.0
     /// The step between the tracks, the buses and the master.
     static let divider: CGFloat = 10
     static let green = Color(red: 0.36, green: 0.80, blue: 0.56)
@@ -52,7 +54,7 @@ struct ConsoleMixer: View {
                 HStack {
                     Text("\(p.tracks.count) track\(p.tracks.count == 1 ? "" : "s")\(buses.isEmpty ? "" : ", \(buses.count) bus\(buses.count == 1 ? "" : "es")")").font(.system(size: 11.5)).foregroundStyle(Theme.secondary)
                     Spacer()
-                    Text("Drag a knob or fader up and down · Shift for fine · double-click to reset").font(.system(size: 11.5)).foregroundStyle(Theme.tertiary)
+                    Text("Drag a knob or fader up and down · Shift for fine · drag the line between strips to resize them").font(.system(size: 11.5)).foregroundStyle(Theme.tertiary)
                 }
                 .padding(.horizontal, 16).frame(height: 32)
             }
@@ -68,12 +70,16 @@ private struct ConsoleShell<Content: View>: View {
     let color: Color
     let name: String
     let number: String
-    var width = ConsoleMetrics.strip
+    /// Added to the shared strip width (the master is a little wider).
+    var extra: CGFloat = 0
     var selected = false
     var dim = false
     @ViewBuilder let content: Content
+    @AppStorage("consoleStrip") private var strip = 64.0
+    @State private var start: Double?
 
     var body: some View {
+        let width = ConsoleMetrics.strip + extra
         VStack(spacing: 5) {
             VStack(spacing: 0) {
                 Rectangle().fill(color.opacity(dim ? 0.35 : 0.85)).frame(height: 2)
@@ -93,8 +99,22 @@ private struct ConsoleShell<Content: View>: View {
         .frame(width: width)
         .frame(maxHeight: .infinity)
         .background(Color.black.opacity(selected ? 0.08 : 0.2))
-        .overlay(alignment: .trailing) { Rectangle().fill(Theme.line).frame(width: 1) }
+        .overlay(alignment: .trailing) { Rectangle().fill(start == nil ? Theme.line : Theme.accent.opacity(0.7)).frame(width: 1) }
         .opacity(dim ? 0.62 : 1)
+        // The line between strips is a handle: drag it to make every strip wider or narrower; double-click to reset.
+        .overlay(alignment: .trailing) {
+            Color.clear.frame(width: 7).contentShape(Rectangle())
+                .onHover { $0 ? NSCursor.resizeLeftRight.push() : NSCursor.pop() }
+                .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { g in
+                        if start == nil { start = strip }
+                        strip = min(ConsoleMetrics.maxStrip, max(ConsoleMetrics.minStrip, ((start ?? strip) + Double(g.translation.width)).rounded()))
+                    }
+                    .onEnded { _ in start = nil })
+                .simultaneousGesture(TapGesture(count: 2).onEnded { strip = 64 })
+                .hint("Drag to make the mixer's strips wider or narrower. Double-click for the standard width.")
+                .offset(x: 3)
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(name)
     }
@@ -535,7 +555,7 @@ private struct ConsoleMaster: View {
     @Environment(Store.self) private var store
     var body: some View {
         let v = store.project.masterVolume ?? 0
-        ConsoleShell(color: Color.white.opacity(0.9), name: "MASTER", number: "", width: ConsoleMetrics.master) {
+        ConsoleShell(color: Color.white.opacity(0.9), name: "MASTER", number: "", extra: 20) {
             // Empty where a track has its knob and keys, so every fader starts at the same height.
             Color.clear.frame(height: 38)
             Color.clear.frame(height: 37)
