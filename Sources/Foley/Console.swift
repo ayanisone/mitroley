@@ -7,7 +7,13 @@ import SwiftUI
 /// own stripe, a lit key, the meter. The cards it replaces are still there (Settings › Mixer).
 enum ConsoleMetrics {
     /// How wide a strip is. Drag the line between two strips to change it; every strip follows.
-    static var strip: CGFloat { CGFloat(min(maxStrip, max(minStrip, UserDefaults.standard.object(forKey: "consoleStrip") as? Double ?? 64))) }
+    static var strip: CGFloat { CGFloat(min(maxStrip, max(minStrip, Size.shared.strip))) }
+    /// The one width every strip and the cables read. Held in an observed object, so all of them are redrawn together
+    /// on every step of a drag; kept between launches.
+    @Observable final class Size {
+        static let shared = Size()
+        var strip = UserDefaults.standard.object(forKey: "consoleStrip") as? Double ?? 64 { didSet { UserDefaults.standard.set(strip, forKey: "consoleStrip") } }
+    }
     static var master: CGFloat { strip + 20 }
     static let minStrip = 56.0, maxStrip = 150.0
     /// The step between the tracks, the buses and the master.
@@ -75,7 +81,6 @@ private struct ConsoleShell<Content: View>: View {
     var selected = false
     var dim = false
     @ViewBuilder let content: Content
-    @AppStorage("consoleStrip") private var strip = 64.0
     @State private var start: Double?
 
     var body: some View {
@@ -107,11 +112,13 @@ private struct ConsoleShell<Content: View>: View {
                 .onHover { $0 ? NSCursor.resizeLeftRight.push() : NSCursor.pop() }
                 .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { g in
-                        if start == nil { start = strip }
-                        strip = min(ConsoleMetrics.maxStrip, max(ConsoleMetrics.minStrip, ((start ?? strip) + Double(g.translation.width)).rounded()))
+                        let size = ConsoleMetrics.Size.shared
+                        if start == nil { start = size.strip }
+                        let next = min(ConsoleMetrics.maxStrip, max(ConsoleMetrics.minStrip, ((start ?? size.strip) + Double(g.translation.width)).rounded()))
+                        if next != size.strip { size.strip = next }
                     }
                     .onEnded { _ in start = nil })
-                .simultaneousGesture(TapGesture(count: 2).onEnded { strip = 64 })
+                .simultaneousGesture(TapGesture(count: 2).onEnded { ConsoleMetrics.Size.shared.strip = 64 })
                 .hint("Drag to make the mixer's strips wider or narrower. Double-click for the standard width.")
                 .offset(x: 3)
         }
