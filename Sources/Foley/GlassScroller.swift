@@ -103,21 +103,26 @@ private struct GlassScrollerProbe: NSViewRepresentable {
                 NotificationCenter.default.addObserver(self, selector: #selector(apply), name: NSScroller.preferredScrollerStyleDidChangeNotification, object: nil)
             }
         }
-        override func layout() { super.layout(); apply() }
+        override func layout() { super.layout(); apply(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in self?.apply() } }
         @objc func apply() {
             DispatchQueue.main.async { [weak self] in
                 guard let self, let root = self.window?.contentView else { return }
                 let mine = self.convert(self.bounds, to: nil)
                 guard mine.width > 4, mine.height > 4 else { return }
+                // The scroll view that shares most of this place. SwiftUI's can be a little larger or smaller than the view
+                // it was made for, so a share of the area is asked for, not an exact fit.
+                var best: (NSScrollView, CGFloat)?
                 func look(_ v: NSView) {
                     if let s = v as? NSScrollView, !(s is TimelineScrollView) {
-                        let f = s.convert(s.bounds, to: nil)
-                        if abs(f.minX - mine.minX) < 3, abs(f.minY - mine.minY) < 3, abs(f.width - mine.width) < 3, abs(f.height - mine.height) < 3 { s.useGlassScrollers() }
+                        let f = s.convert(s.bounds, to: nil), both = f.intersection(mine)
+                        let share = both.isNull ? 0 : both.width * both.height / max(1, max(f.width * f.height, mine.width * mine.height))
+                        if share > 0.6, share > (best?.1 ?? 0) { best = (s, share) }
                         return
                     }
                     for c in v.subviews { look(c) }
                 }
                 look(root)
+                best?.0.useGlassScrollers()
             }
         }
         deinit { NotificationCenter.default.removeObserver(self) }

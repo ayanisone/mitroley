@@ -398,6 +398,7 @@ struct SettingsSheet: View {
     @AppStorage("hintBox") private var hintBox = true
     @AppStorage("mixerStyle") private var mixerStyle = "console"
     @AppStorage("cableLook") private var cableLook = 0
+    @AppStorage("haptics") private var haptics = true
     @AppStorage("backdropPointer") private var backdropPointer = true
     @AppStorage("voiceAgentVoice") private var helperVoice = ""
     @AppStorage("voiceAgentVoiceName") private var helperVoiceName = ""
@@ -506,6 +507,8 @@ struct SettingsSheet: View {
             }
             Caption((MotionLevel(rawValue: motionLevel) ?? .auto).about + (motionLevel == "auto" ? " Right now: \(MotionLevel.automatic.title.lowercased())." : ""))
             Toggle("The picture reacts to the pointer (experimental)", isOn: $backdropPointer)
+                .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
+            Toggle("Taps in the trackpad: at 0 dB, a knob's centre, a plug finding a jack", isOn: $haptics)
                 .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
             Toggle("Hint box in the corner: says what the pointer is on", isOn: $hintBox)
                 .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))

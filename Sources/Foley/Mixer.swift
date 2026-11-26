@@ -356,9 +356,9 @@ struct Cables: View {
                 if lit { ctx.stroke(path, with: .color(.black.opacity(0.4)), style: StrokeStyle(lineWidth: wide + 1.9, lineCap: .round, dash: dots ? dash : [])) }
                 ctx.stroke(path, with: shading, style: StrokeStyle(lineWidth: wide, lineCap: .round, lineJoin: .round, dash: dash))
                 if l.dashed {
-                    var head = Path()
-                    head.move(to: CGPoint(x: b.x, y: b.y + 2)); head.addLine(to: CGPoint(x: b.x - 4, y: b.y + 10)); head.addLine(to: CGPoint(x: b.x + 4, y: b.y + 10)); head.closeSubpath()
-                    ctx.fill(head, with: .color(l.color.opacity(lit ? 0.95 : (l.strong ? 0.5 : 0.18))))
+                    // A sidechain ends in a small bead under the port it listens at, clear of the port's own arrow.
+                    let bead = CGRect(x: b.x - 2.2, y: b.y + 7.5, width: 4.4, height: 4.4)
+                    ctx.fill(Path(ellipseIn: bead), with: .color(l.color.opacity(lit ? 0.95 : (l.strong ? 0.6 : 0.25))))
                 }
                 // Where the hand has it.
                 if holding?.key == l.key, target == nil {
@@ -382,32 +382,37 @@ struct Cables: View {
                 let side = target.map { ports[$0].track != nil } == true
                 draw(Link(key: "pull", a: CGPoint(x: from.x, y: top), b: end, color: side ? Theme.accent : color, end: side ? Theme.accent : Theme.current.ink, strong: true, dashed: side, track: nil), lit: true)
             }
-            // The plug in the hand: the end of the cable that came out of its jack.
+            func disc(_ c: CGPoint, _ r: CGFloat) -> Path { Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)) }
+            // The plug in the hand: a dark barrel with one band of the cable's colour, no shine.
             if let pull = pulling, target == nil {
                 let color = ports[pull.from].track.flatMap { id in p.tracks.first { $0.id == id }?.kind.color } ?? Color(white: 0.78)
-                let tip = CGRect(x: pull.at.x - 4, y: pull.at.y - 4, width: 8, height: 8)
-                ctx.fill(Path(ellipseIn: tip.insetBy(dx: -1.5, dy: -1.5)), with: .color(.black.opacity(0.45)))
-                ctx.fill(Path(ellipseIn: tip), with: .color(color))
-                ctx.fill(Path(ellipseIn: CGRect(x: pull.at.x - 2.2, y: pull.at.y - 2.6, width: 2.4, height: 2.4)), with: .color(.white.opacity(0.6)))
+                ctx.fill(disc(pull.at, 4.6), with: .color(.black.opacity(0.35)))
+                ctx.fill(disc(pull.at, 3.6), with: .color(Color(white: 0.13)))
+                ctx.stroke(disc(pull.at, 3.1), with: .color(color), lineWidth: 1.2)
             }
-            // Each socket is a small jack: a metal collar, the hole, and the coloured tip of whatever is plugged into it.
+            // Each socket is drawn the way the console's keys are: flat and quiet. A fine collar, a recess sunk into the
+            // panel (dark along its top lip, a hair of light along the bottom), and inside it the end of what is plugged in,
+            // in that cable's colour. Nothing glossy; the colour belongs to the cable, not the hardware.
             for (i, port) in ports.enumerated() {
                 let aimed = target == i, hover = overPort == i && pulling == nil && holding == nil
-                let lit = (port.track != nil && port.track == selected) || aimed || hover
+                let mine = port.track != nil && port.track == selected
                 let out = pulling?.from == i   // its plug is in the hand
-                let r: CGFloat = aimed ? 7.5 : hover ? 7 : 5.8
                 let c = CGPoint(x: port.x, y: top)
-                func ring(_ r: CGFloat) -> Path { Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)) }
-                ctx.fill(ring(r + 1.2), with: .color(.black.opacity(0.5)))
-                ctx.fill(ring(r), with: .linearGradient(Gradient(colors: [Color(white: 0.62), Color(white: 0.2)]), startPoint: CGPoint(x: c.x, y: c.y - r), endPoint: CGPoint(x: c.x, y: c.y + r)))
-                ctx.stroke(ring(r - 0.4), with: .color(.white.opacity(0.22)), lineWidth: 0.6)
-                ctx.fill(ring(r * 0.56), with: .color(Color(white: 0.04)))
+                let collar: CGFloat = aimed ? 7 : hover ? 6.5 : 5.5, well = collar - 2
+                let color: Color = port.track.flatMap { id in p.tracks.first { $0.id == id }?.kind.color } ?? (port.master ? Theme.current.ink : Color(white: 0.78))
+                ctx.fill(disc(c, collar), with: .color(Color(white: 0.07)))
+                var lip = ctx
+                lip.clip(to: disc(c, well))
+                lip.fill(disc(c, well), with: .color(.black.opacity(0.75)))
+                lip.stroke(disc(CGPoint(x: c.x, y: c.y + 1), well), with: .color(.black.opacity(0.9)), lineWidth: 1.6)
+                var foot = ctx
+                foot.clip(to: Path(CGRect(x: c.x - collar, y: c.y, width: collar * 2, height: collar + 1)))
+                foot.stroke(disc(c, well + 0.3), with: .color(.white.opacity(0.14)), lineWidth: 0.6)
+                ctx.stroke(disc(c, collar - 0.5), with: .color(aimed ? Theme.accent : mine ? color.opacity(0.95) : Color.white.opacity(hover ? 0.7 : 0.26)), lineWidth: aimed ? 1.5 : 1)
                 if !out {
-                    let color: Color = port.track.flatMap { id in p.tracks.first { $0.id == id }?.kind.color } ?? (port.master ? Theme.current.ink : Color(white: 0.78))
-                    ctx.fill(ring(r * 0.4), with: .color(color.opacity(port.track == nil || selected == nil || port.track == selected ? 1 : 0.55)))
-                    ctx.fill(Path(ellipseIn: CGRect(x: c.x - r * 0.24, y: c.y - r * 0.3, width: r * 0.24, height: r * 0.24)), with: .color(.white.opacity(0.55)))
+                    let dim = port.track != nil && selected != nil && !mine
+                    ctx.fill(disc(c, port.track == nil ? 1.3 : 1.9), with: .color(color.opacity(port.track == nil ? 0.6 : dim ? 0.4 : 0.9)))
                 }
-                if lit { ctx.stroke(ring(r + 1.6), with: .color(Theme.accent.opacity(aimed || hover ? 1 : 0.8)), lineWidth: 1.3) }
             }
         }
         .frame(width: width, height: height)
@@ -467,6 +472,7 @@ struct Cables: View {
                 guard let pull = carried, let j = target, j != pull.from, pulling != nil || g.location.y < Self.top + 15 else { return }
                 let from = ports[pull.from], to = ports[j]
                 guard let source = from.track else { return }   // a bus always plays into the master
+                Haptic.tick(.levelChange)
                 if to.master { store.setGroup(nil, for: [source]) }
                 else if let name = p.group(to.bus)?.name { store.setGroup(name, for: [source]) }
                 else if let other = to.track {
@@ -477,6 +483,7 @@ struct Cables: View {
             })
         .onChange(of: shape) { _, _ in sim.wake() }
         .onChange(of: look) { _, _ in sim.wake() }
+        .onChange(of: target) { _, t in if t != nil { Haptic.tick() } }
         .onChange(of: MixGraph.busSignature(p) + p.tracks.map { "\($0.groupID?.uuidString ?? "-")\($0.duck?.source?.uuidString ?? ($0.duck == nil ? "" : "v"))" }.joined()) { _, _ in sim.wake() }
         .onAppear { sim.wake() }
         .hint("Pull the plug out of a track's jack and carry it to a bus or the master to send it there, or onto another track to sidechain. Any cable can also be taken by its middle and pulled: it swings back when you let go. Right-click a jack for the routing menu and how the cables look.")

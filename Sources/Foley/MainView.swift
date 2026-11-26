@@ -11,10 +11,12 @@ struct MainView: View {
     @State private var dockStart: CGFloat?
     @AppStorage("browserWidth") private var browserWidth = 380.0
     @State private var browserStart: CGFloat?
+    @State private var liveSide: CGFloat?
 
     var body: some View {
         @Bindable var store = store
-        let side = min(520, max(300, CGFloat(browserWidth)))
+        // While the edge is being dragged the width lives in memory; it is written to the settings once, when let go.
+        let side = min(520, max(300, liveSide ?? CGFloat(browserWidth)))
         HStack(spacing: 0) {
             if store.browser {
                 LibraryView(side: true)
@@ -26,15 +28,15 @@ struct MainView: View {
                             .ignoresSafeArea()
                     }
                     .overlay(alignment: .trailing) {
-                        Color.clear.frame(width: 9).contentShape(Rectangle()).offset(x: 4)
-                            .onHover { $0 ? NSCursor.resizeLeftRight.push() : NSCursor.pop() }
-                            .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .global)
-                                .onChanged { g in
-                                    if browserStart == nil { browserStart = side }
-                                    browserWidth = Double(min(520, max(300, (browserStart ?? side) + g.translation.width)))
-                                }
-                                .onEnded { _ in browserStart = nil })
-                            .onTapGesture(count: 2) { browserWidth = 380 }
+                        PaneHandle(axis: .columns, moved: { t in
+                            if browserStart == nil { browserStart = side }
+                            let w = min(520, max(300, ((browserStart ?? side) + t).rounded()))
+                            if w != liveSide { liveSide = w }
+                        }, ended: {
+                            if let w = liveSide { browserWidth = Double(w) }
+                            liveSide = nil; browserStart = nil
+                        }, reset: { browserWidth = 380 })
+                        .offset(x: 8)
                     }
                     .transition(reduceMotion ? .opacity : .move(edge: .leading).combined(with: .opacity))
                     .zIndex(1)
@@ -53,14 +55,14 @@ struct MainView: View {
                     Rectangle()
                         .fill(Theme.line)
                         .frame(height: 1)
-                        .overlay(Rectangle().fill(Color.clear).frame(height: 9).contentShape(Rectangle())
-                            .onHover { $0 ? NSCursor.resizeUpDown.push() : NSCursor.pop() }
-                            .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .global)
-                                .onChanged { g in
-                                    if dragStart == nil { dragStart = tl }
-                                    timelineHeight = min(maxTimeline, max(180, (dragStart ?? tl) - g.translation.height))
-                                }
-                                .onEnded { _ in dragStart = nil }))
+                        .overlay {
+                            PaneHandle(axis: .rows, moved: { t in
+                                if dragStart == nil { dragStart = tl }
+                                timelineHeight = min(maxTimeline, max(180, (dragStart ?? tl) - t))
+                            }, ended: { dragStart = nil })
+                        }
+                        // Above the timeline that follows it: laid under it, the lower half of the handle could not be reached.
+                        .zIndex(2)
                     TimelineView()
                         .frame(height: tl)
                         // Tell the flag where the panels are, so it goes out of focus behind them.
@@ -69,14 +71,13 @@ struct MainView: View {
                         Rectangle()
                             .fill(Theme.line)
                             .frame(height: 1)
-                            .overlay(Rectangle().fill(Color.clear).frame(height: 9).contentShape(Rectangle())
-                                .onHover { $0 ? NSCursor.resizeUpDown.push() : NSCursor.pop() }
-                                .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .global)
-                                    .onChanged { g in
-                                        if dockStart == nil { dockStart = dock }
-                                        dockHeight = Double(min(max(326, geo.size.height - 380), max(326, (dockStart ?? dock) - g.translation.height)))
-                                    }
-                                    .onEnded { _ in dockStart = nil }))
+                            .overlay {
+                                PaneHandle(axis: .rows, moved: { t in
+                                    if dockStart == nil { dockStart = dock }
+                                    dockHeight = Double(min(max(326, geo.size.height - 380), max(326, (dockStart ?? dock) - t)))
+                                }, ended: { dockStart = nil })
+                            }
+                            .zIndex(2)
                         DockPanel()
                             .frame(height: dock)
                     }
@@ -101,7 +102,7 @@ struct MainView: View {
         .background { Backdrop().ignoresSafeArea() }
         .onChange(of: store.browser ? side : 0, initial: true) { _, w in FlagLayout.left = w }
         .onChange(of: store.sideOpen, initial: true) { _, open in FlagLayout.inspector = open ? Metrics.inspector : 0 }
-        .animation(Motion.ui(reduceMotion), value: store.browser)
+        .animation(liveSide == nil ? Motion.ui(reduceMotion) : nil, value: store.browser)
         .animation(Motion.ui(reduceMotion), value: store.sideOpen)
         .navigationTitle(store.project.name)
         // No separate title-bar material: the picture side and the panel side each keep their own colour to the top.
@@ -164,6 +165,51 @@ struct MainView: View {
             bar.allowsDisplayModeCustomization = false
             bar.allowsUserCustomization = false
         })
+    }
+}
+
+/// The edge between two panes, made to be taken hold of: a band 16 pt deep that sits above both panes, a small grip that
+/// is always faintly there to show where to grab, and a line that lights along the whole edge under the pointer. The drag
+/// is measured against the window, so the edge follows the hand exactly.
+struct PaneHandle: View {
+    enum Axis { case rows, columns }
+    let axis: Axis
+    /// How far the pointer has moved since the press, along the axis.
+    let moved: (CGFloat) -> Void
+    let ended: () -> Void
+    var reset: (() -> Void)?
+    @State private var hot = false
+    @State private var held = false
+
+    var body: some View {
+        let lit = hot || held, rows = axis == .rows
+        ZStack {
+            Color.clear
+            Capsule().fill(Theme.accent.opacity(held ? 0.9 : 0.5))
+                .frame(width: rows ? nil : 2.5, height: rows ? 2.5 : nil)
+                .opacity(lit ? 1 : 0)
+            Capsule().fill(Color.white.opacity(lit ? 0.95 : 0.3))
+                .frame(width: rows ? 40 : 4, height: rows ? 4 : 40)
+                .shadow(color: .black.opacity(0.4), radius: 1.5, y: 0.5)
+        }
+        .frame(width: rows ? nil : 16, height: rows ? 16 : nil)
+        .contentShape(Rectangle())
+        .onContinuousHover { phase in
+            switch phase {
+            case .active: hot = true; (rows ? NSCursor.resizeUpDown : NSCursor.resizeLeftRight).set()
+            case .ended: hot = false; if !held { NSCursor.arrow.set() }
+            }
+        }
+        .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .global)
+            .onChanged { g in
+                if !held { held = true; Haptic.tick(.generic) }
+                (rows ? NSCursor.resizeUpDown : NSCursor.resizeLeftRight).set()
+                moved(rows ? g.translation.height : g.translation.width)
+            }
+            .onEnded { _ in held = false; ended(); if !hot { NSCursor.arrow.set() } })
+        .simultaneousGesture(TapGesture(count: 2).onEnded { reset?() })
+        .animation(.easeOut(duration: 0.12), value: lit)
+        .accessibilityLabel(rows ? "Resize the panes above and below" : "Resize the panes left and right")
     }
 }
 

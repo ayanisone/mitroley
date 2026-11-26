@@ -132,9 +132,10 @@ struct SegmentedPill<T: Hashable>: View {
         let under = drag == nil ? selected : index(at: x)
         ZStack(alignment: .leading) {
             Capsule().fill(Color.white.opacity(pressed ? 0.24 : 0.18))
-                .frame(width: segmentWidth, height: height)
+                // A little smaller than its segment, so there is the same even margin of the trough all round it.
+                .frame(width: segmentWidth - 3, height: height - 3)
                 .scaleEffect(pressed ? 0.96 : 1)
-                .offset(x: x - segmentWidth / 2)
+                .offset(x: x - segmentWidth / 2 + 1.5)
                 .animation(drag == nil ? (reduceMotion ? .easeOut(duration: 0.12) : .spring(response: 0.3, dampingFraction: 0.8)) : nil, value: x)
                 .animation(.spring(response: 0.22, dampingFraction: 0.85), value: pressed)
             HStack(spacing: 0) {
@@ -159,6 +160,7 @@ struct SegmentedPill<T: Hashable>: View {
                 pressed = false
                 drag = nil
                 guard options[i].value != selection else { return }
+                Haptic.tick(.generic)
                 let value = options[i].value
                 if settleFirst {
                     chosen = i
@@ -469,5 +471,16 @@ struct QuietEditor: View {
             .background(Theme.raised, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
             .contentShape(Rectangle())
             .onTapGesture { focused = true }
+    }
+}
+
+
+/// A small tap in the trackpad where the hand would feel something on real hardware: a fader passing 0 dB, a knob passing
+/// its centre, a plug finding a jack. Only trackpads that can do it respond; Settings has the switch.
+enum Haptic {
+    static var on: Bool { UserDefaults.standard.object(forKey: "haptics") as? Bool ?? true }
+    static func tick(_ pattern: NSHapticFeedbackManager.FeedbackPattern = .alignment) {
+        guard on else { return }
+        NSHapticFeedbackManager.defaultPerformer.perform(pattern, performanceTime: .now)
     }
 }

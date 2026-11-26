@@ -27,7 +27,7 @@ enum ConsoleMetrics {
         }
     }
     /// The narrowest a strip is let go when fitting: under this the keys no longer sit side by side, and the mixer scrolls.
-    static let fitStrip = 52.0
+    static let fitStrip = 62.0
     static var master: CGFloat { strip + 20 }
     static let minStrip = 56.0, maxStrip = 150.0
     /// The step between the tracks, the buses and the master.
@@ -79,9 +79,9 @@ struct ConsoleMixer: View {
             if !docked {
                 Rectangle().fill(Theme.line).frame(height: 1)
                 HStack {
-                    Text("\(p.tracks.count) track\(p.tracks.count == 1 ? "" : "s")\(buses.isEmpty ? "" : ", \(buses.count) bus\(buses.count == 1 ? "" : "es")")").font(.system(size: 11.5)).foregroundStyle(Theme.secondary)
+                    Text("\(p.tracks.count) track\(p.tracks.count == 1 ? "" : "s")\(buses.isEmpty ? "" : ", \(buses.count) bus\(buses.count == 1 ? "" : "es")")").font(.system(size: 11.5)).foregroundStyle(Theme.secondary).lineLimit(1).fixedSize()
                     Spacer()
-                    Text("Drag a knob or fader up and down · Shift for fine · drag the line between strips to resize them").font(.system(size: 11.5)).foregroundStyle(Theme.tertiary)
+                    Text("Drag a knob or fader up and down · Shift for fine · drag the line between strips to resize them").font(.system(size: 11.5)).foregroundStyle(Theme.tertiary).lineLimit(1).truncationMode(.tail)
                 }
                 .padding(.horizontal, 16).frame(height: 32)
             }
@@ -176,7 +176,7 @@ private struct ConsoleKey: View {
     let help: String
     let action: () -> Void
     var body: some View {
-        Button(action: action) { KeyFace(label: label, on: on, tint: tint) }
+        Button { Haptic.tick(.generic); action() } label: { KeyFace(label: label, on: on, tint: tint) }
             .buttonStyle(PressStyle(scale: 0.96))
             .hint(help)
             .accessibilityLabel(help)
@@ -243,8 +243,10 @@ struct Knob: View {
             .onChanged { g in
                 if !dragging { dragging = true; begin(); start = value }
                 let fine: Double = NSEvent.modifierFlags.contains(.shift) ? 0.25 : 1
-                let v = start - Double(g.translation.height) / 140 * (range.upperBound - range.lowerBound) * fine
-                change(min(range.upperBound, max(range.lowerBound, v)))
+                let v = min(range.upperBound, max(range.lowerBound, start - Double(g.translation.height) / 140 * (range.upperBound - range.lowerBound) * fine))
+                // A detent where the knob passes its resting place.
+                if let reset, (value - reset) * (v - reset) < 0 || (v == reset && value != reset) { Haptic.tick() }
+                change(v)
             }
             .onEnded { _ in dragging = false })
         .simultaneousGesture(TapGesture(count: 2).onEnded { if let reset { begin(); change(reset) } })
@@ -316,8 +318,10 @@ struct ConsoleFader: View {
                     let fine = NSEvent.modifierFlags.contains(.shift)
                     let target = Self.db(1 - Double((g.location.y - grab - cap / 2) / travel))
                     // Shift: a quarter of the movement, for fine trims.
-                    let v = fine ? value + (target - value) * 0.25 : target
-                    change((v * 10).rounded() / 10)
+                    let v = ((fine ? value + (target - value) * 0.25 : target) * 10).rounded() / 10
+                    // A detent at 0 dB, and a stop at each end of the travel.
+                    if v != value, value * v < 0 || v == 0 || v >= 12 || v <= -48 { Haptic.tick(v == 0 || value * v < 0 ? .alignment : .levelChange) }
+                    change(v)
                 }
                 .onEnded { _ in dragging = false })
             .simultaneousGesture(TapGesture(count: 2).onEnded { begin(); change(0) })
