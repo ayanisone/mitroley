@@ -397,6 +397,7 @@ struct SettingsSheet: View {
     @AppStorage("motionLevel") private var motionLevel = MotionLevel.auto.rawValue
     @AppStorage("hintBox") private var hintBox = true
     @AppStorage("mixerStyle") private var mixerStyle = "console"
+    @AppStorage("cableLook") private var cableLook = 0
     @AppStorage("backdropPointer") private var backdropPointer = true
     @AppStorage("voiceAgentVoice") private var helperVoice = ""
     @AppStorage("voiceAgentVoiceName") private var helperVoiceName = ""
@@ -494,6 +495,11 @@ struct SettingsSheet: View {
             Picker("Mixer", selection: $mixerStyle) {
                 Text("Console").tag("console")
                 Text("Cards (as before)").tag("classic")
+            }
+            Picker("Cables", selection: $cableLook) {
+                Text("Fading into where they go").tag(0)
+                Text("Dotted").tag(1)
+                Text("Flat colour (as before)").tag(2)
             }
             Picker("Motion", selection: $motionLevel) {
                 ForEach(MotionLevel.allCases) { m in Text(m.title).tag(m.rawValue) }

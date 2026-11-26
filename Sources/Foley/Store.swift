@@ -89,6 +89,13 @@ final class Store {
     var showExport = false
     var showSettings = false
     var showClaude = false
+    /// The panel down the right side put away, to give the picture, timeline and mixer the whole width.
+    var sideHidden: Bool = UserDefaults.standard.bool(forKey: "sideHidden") { didSet { UserDefaults.standard.set(sideHidden, forKey: "sideHidden") } }
+    /// The right side is showing: the inspector unless put away, and always while Claude is open.
+    var sideOpen: Bool { showClaude || !sideHidden }
+    func toggleSide() {
+        if sideOpen { showClaude = false; sideHidden = true } else { sideHidden = false }
+    }
     var canUndo = false
     var canRedo = false
     let player = Player()
@@ -101,7 +108,9 @@ final class Store {
     /// Asks a small panel to open itself: "presets" or "duck", for the selected track. Set by the voice helper.
     var peek: String?
     /// What is open under the timeline: "mixer", "library" or nothing. Remembered between launches.
-    var dock: String? = UserDefaults.standard.string(forKey: "dock") { didSet { UserDefaults.standard.set(dock, forKey: "dock") } }
+    var dock: String? = UserDefaults.standard.string(forKey: "dock") { didSet { UserDefaults.standard.set(dock, forKey: "dock"); if dock == "library", browser { browser = false } } }
+    /// The library as a browser down the left side of the window.
+    var browser: Bool = UserDefaults.standard.bool(forKey: "browser") { didSet { UserDefaults.standard.set(browser, forKey: "browser"); if browser, dock == "library" { dock = nil } } }
     func toggleDock(_ which: String) { dock = dock == which ? nil : which }
     /// Languages being dubbed right now, and how each is getting on.
     var dubJobs: [DubJob] = []

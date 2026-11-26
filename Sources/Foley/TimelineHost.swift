@@ -76,6 +76,12 @@ final class TimelineScrollView: NSScrollView {
     var onPinch: ((CGFloat, CGFloat, Bool, Bool) -> Void)?
     private var total: CGFloat = 1
 
+    /// The glass bars float over the lanes whatever the Mac's own setting says, so they never take a strip of the timeline.
+    override var scrollerStyle: NSScroller.Style {
+        get { .overlay }
+        set { super.scrollerStyle = .overlay }
+    }
+
     override func magnify(with event: NSEvent) {
         if event.phase == .began { total = 1 }
         total *= 1 + event.magnification
@@ -176,11 +182,15 @@ struct TimelineHost: NSViewRepresentable {
         v.hasHorizontalScroller = true
         v.hasVerticalScroller = true
         v.autohidesScrollers = true
-        v.scrollerStyle = .overlay
+        v.useGlassScrollers()
         // No fill of its own: the lanes bring their own, and a colour fixed here would not follow the theme.
         v.drawsBackground = false
         v.allowsMagnification = false
         v.usesPredominantAxisScrolling = false
+        // One notch of a mouse wheel moves most of a track, not a sliver of one.
+        v.verticalLineScroll = 44
+        v.horizontalLineScroll = 44
+        v.verticalPageScroll = 20
         // Views do not clip by default; without this the floating track names show outside the timeline.
         v.clipsToBounds = true
         v.contentView.clipsToBounds = true
@@ -234,7 +244,9 @@ struct TimelineHost: NSViewRepresentable {
             c.stale = true
         }
         v.onPinch = onPinch
-        let alpha: CGFloat = standIn ? 0 : 1
+        // Not quite nothing: a layer at exactly zero is dropped from the picture, and the frosted track names above it
+        // then have nothing behind them to blur and go solid.
+        let alpha: CGFloat = standIn ? 0.004 : 1
         if c.lanes.alphaValue != alpha { c.lanes.alphaValue = alpha; c.pinned.alphaValue = alpha }
         c.layout()
         // Row heights can change without this view being told (track height); settle once more after SwiftUI has.

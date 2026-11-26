@@ -363,6 +363,9 @@ struct LibraryView: View {
     @AppStorage("libraryAutoplay") private var autoplay = true
     /// Inside the main window, under the timeline.
     var docked = false
+    /// Down the left side of the main window: places on the left, the sounds beside them, a preview at the foot.
+    var side = false
+    @State private var overPlace: String?
 
     private var lengths: (Double, Double) { length == 1 ? (0, 0.5) : length == 2 ? (0.5, 3) : length == 3 ? (3, .infinity) : (0, .infinity) }
 
@@ -370,7 +373,9 @@ struct LibraryView: View {
         let library = store.library
         let results = Array(library.find(text: text, shape: shape, tone: tone, minLength: lengths.0, maxLength: lengths.1, folder: folder, like: like).prefix(600))
         VStack(spacing: 0) {
-            if docked {
+            if side {
+                browser(results, library)
+            } else if docked {
                 // Under the timeline: what to look for on the left, the sounds beside it, so the list keeps its height.
                 HStack(spacing: 0) {
                     ScrollView { filters(library).padding(14) }.frame(width: 400)
@@ -382,6 +387,7 @@ struct LibraryView: View {
                 Rectangle().fill(Theme.line).frame(height: 1)
                 list(results, library)
             }
+            if !side {
             Rectangle().fill(Theme.line).frame(height: 1)
             HStack(spacing: 8) {
                 if library.scanning { ProgressView().controlSize(.small) }
@@ -398,13 +404,188 @@ struct LibraryView: View {
                 Text("↑ ↓ move · Space plays or stops · Return places · drag onto a track").font(.system(size: 11.5)).foregroundStyle(Theme.tertiary).lineLimit(1)
             }
             .padding(.horizontal, 16).frame(height: 34)
+            }
         }
-        .background(Theme.panel)
+        .background(side ? Color.clear : Theme.panel)
         .task { await library.scan() }
         // The arrow keys, Space and Return belong to the library while the pointer was last pressed inside it.
         .onHover { library.hovered = $0 }
         .onAppear { library.active = true }
         .onDisappear { library.active = false; library.hovered = false; store.stopAudition() }
+    }
+
+
+    // MARK: Browser down the left side
+
+    private func addFolder(_ library: Library) {
+        if let u = Places.chooseFolder("Choose a folder of sounds to add to the library.", start: Library.home) { library.add(folder: u) }
+    }
+
+    @ViewBuilder private func browser(_ results: [SoundItem], _ library: Library) -> some View {
+        HStack(spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.tertiary)
+                TextField("Search sounds", text: $text).textFieldStyle(.plain).font(.system(size: 12.5))
+                if !text.isEmpty {
+                    Button { text = "" } label: { Image(systemName: "xmark.circle.fill").font(.system(size: 11)).foregroundStyle(Theme.tertiary) }
+                        .buttonStyle(.plain).accessibilityLabel("Clear the search")
+                }
+            }
+            .padding(.horizontal, 8).frame(height: 26)
+            .background(Theme.raised, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            Button { store.browser = false } label: {
+                Image(systemName: "sidebar.left").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.secondary).frame(width: 26, height: 26).contentShape(Rectangle())
+            }
+            .buttonStyle(PressStyle(scale: 0.9))
+            .hint("Hide the library (⌥⌘L)")
+        }
+        .padding(.horizontal, 10).frame(height: 40)
+        Rectangle().fill(Theme.line).frame(height: 1)
+        HStack(spacing: 0) {
+            ScrollView { places(library).padding(.horizontal, 6).padding(.vertical, 8) }
+                .scrollIndicators(.never)
+                .frame(width: 136)
+            Rectangle().fill(Theme.line).frame(width: 1)
+            VStack(spacing: 0) {
+                HStack(spacing: 6) {
+                    pick("Tone", tone?.title, [("Any tone", { tone = nil })] + SoundItem.Tone.allCases.map { t in (t.title, { tone = t }) })
+                    pick("Length", length == 1 ? "Under ½ s" : length == 2 ? "½ to 3 s" : length == 3 ? "Over 3 s" : nil,
+                         [("Any length", { length = 0 }), ("Under ½ s", { length = 1 }), ("½ to 3 s", { length = 2 }), ("Over 3 s", { length = 3 })])
+                    Spacer(minLength: 0)
+                    Text(library.scanning ? library.progress : "\(results.count)\(results.count >= 600 ? "+" : "")")
+                        .font(.system(size: 10.5).monospacedDigit()).foregroundStyle(Theme.tertiary).lineLimit(1)
+                }
+                .padding(.horizontal, 8).frame(height: 30)
+                if let like {
+                    HStack(spacing: 6) {
+                        Text("Shaped like \(like.name)").font(.system(size: 11)).foregroundStyle(Theme.accent).lineLimit(1)
+                        Spacer(minLength: 0)
+                        Button("Clear") { self.like = nil }.buttonStyle(.plain).font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.accent)
+                    }
+                    .padding(.horizontal, 10).padding(.bottom, 6)
+                }
+                list(results, library, compact: true)
+            }
+        }
+        Rectangle().fill(Theme.line).frame(height: 1)
+        preview(library)
+    }
+
+    /// The left column: what kind of sound, then where it is kept.
+    @ViewBuilder private func places(_ library: Library) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            heading("Shape")
+            place("shape", "All", nil, shape == nil, about: "Every shape") { shape = nil }
+            ForEach(SoundItem.Shape.allCases) { s in
+                place("shape-\(s.rawValue)", s.title, s, shape == s, about: s.about) { shape = shape == s ? nil : s }
+            }
+            heading("Places").padding(.top, 10)
+            place("folder", "All", nil, folder == nil, symbol: "tray.full", about: "Every folder in the library") { folder = nil }
+            ForEach(Array(Set(library.items.map(\.folder))).sorted(), id: \.self) { f in
+                place("folder-\(f)", f, nil, folder == f, symbol: "folder", about: "Only the sounds in \(f)") { folder = folder == f ? nil : f }
+            }
+            Menu {
+                Button("Add a Folder of Sounds…") { addFolder(library) }
+                Button("Look Again for New Sounds") { Task { await library.scan() } }
+                Divider()
+                ForEach(library.folders, id: \.self) { f in
+                    Menu(f.lastPathComponent) {
+                        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([f]) }
+                        Button("Remove from the Library") { library.remove(folder: f) }
+                    }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "plus").font(.system(size: 9.5, weight: .bold)).frame(width: 16)
+                    Text("Folders…").font(.system(size: 11.5, weight: .medium))
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(Theme.secondary)
+                .padding(.horizontal, 6).frame(height: 24).contentShape(Rectangle())
+            }
+            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
+            .hint("Add a folder of sounds, look again for new ones, or take a folder out of the library")
+        }
+    }
+
+    private func heading(_ s: String) -> some View {
+        Text(s.uppercased()).font(.system(size: 9.5, weight: .semibold)).tracking(0.6).foregroundStyle(Theme.tertiary)
+            .padding(.horizontal, 6).frame(height: 20)
+    }
+
+    private func place(_ key: String, _ title: String, _ glyph: SoundItem.Shape?, _ on: Bool, symbol: String? = nil, about: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Group {
+                    if let symbol { Image(systemName: symbol).font(.system(size: 10, weight: .medium)) } else { ShapeGlyph(shape: glyph) }
+                }
+                .frame(width: 16, height: 12)
+                Text(title).font(.system(size: 11.5, weight: on ? .semibold : .medium)).lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(on ? Color.white : Theme.secondary)
+            .padding(.horizontal, 6).frame(height: 24)
+            .background(on ? Theme.accent.opacity(0.26) : overPlace == key ? Theme.raised : Color.clear, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { overPlace = $0 ? key : (overPlace == key ? nil : overPlace) }
+        .hint(about)
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+
+    private func pick(_ title: String, _ value: String?, _ options: [(String, () -> Void)]) -> some View {
+        Menu {
+            ForEach(Array(options.enumerated()), id: \.offset) { _, o in Button(o.0, action: o.1) }
+        } label: {
+            HStack(spacing: 3) {
+                Text(value ?? title).font(.system(size: 11, weight: value == nil ? .medium : .semibold)).lineLimit(1)
+                Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold))
+            }
+            .foregroundStyle(value == nil ? Theme.secondary : Color.white)
+            .padding(.horizontal, 8).frame(height: 20)
+            .background(value == nil ? Color.white.opacity(0.06) : Theme.accent.opacity(0.32), in: Capsule())
+            .contentShape(Capsule())
+        }
+        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+    }
+
+    /// The foot of the browser: the chosen sound drawn large, with a play key and the switch for hearing sounds as you move.
+    @ViewBuilder private func preview(_ library: Library) -> some View {
+        let item = library.items.first { $0.id == library.picked }
+        let playing = item != nil && store.auditionPath == item?.path
+        HStack(spacing: 8) {
+            Button { if let item { store.audition(path: item.path) } } label: {
+                Image(systemName: playing ? "stop.fill" : "play.fill").font(.system(size: 10))
+                    .frame(width: 28, height: 28)
+                    .background(playing ? Theme.accent.opacity(0.4) : Color.white.opacity(0.09), in: Circle())
+                    .contentShape(Circle())
+            }
+            .buttonStyle(PressStyle(scale: 0.9))
+            .disabled(item == nil)
+            .hint("Play or stop the chosen sound (Space)")
+            VStack(alignment: .leading, spacing: 3) {
+                if let item {
+                    Envelope(points: item.envelope, color: Theme.accent.opacity(playing ? 0.95 : 0.6)).frame(height: 20)
+                    Text("\(item.name) · \(item.shape.title) · \(item.tone.title)\(item.note.map { " · " + $0 } ?? "") · \(shortTime(item.duration))")
+                        .font(.system(size: 10.5)).foregroundStyle(Theme.secondary).lineLimit(1).truncationMode(.middle)
+                } else {
+                    Text("Click a sound to hear it").font(.system(size: 11.5, weight: .medium)).foregroundStyle(Theme.secondary)
+                    Text("↑ ↓ move · Return places · or drag onto a track").font(.system(size: 10.5)).foregroundStyle(Theme.tertiary).lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button { autoplay.toggle() } label: {
+                Image(systemName: "headphones").font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(autoplay ? Theme.accent : Theme.tertiary)
+                    .frame(width: 26, height: 26).contentShape(Rectangle())
+            }
+            .buttonStyle(PressStyle(scale: 0.9))
+            .hint(autoplay ? "Sounds play as you move through them. Click to keep them quiet until you press Space." : "Sounds stay quiet until you press Space. Click to hear each one as you move.")
+            .accessibilityLabel("Play sounds as I move through them")
+            .accessibilityAddTraits(autoplay ? .isSelected : [])
+        }
+        .padding(.horizontal, 10).frame(height: 58)
     }
 
     @ViewBuilder private func filters(_ library: Library) -> some View {
@@ -462,39 +643,41 @@ struct LibraryView: View {
         }
     }
 
-    @ViewBuilder private func list(_ results: [SoundItem], _ library: Library) -> some View {
+    @ViewBuilder private func list(_ results: [SoundItem], _ library: Library, compact: Bool = false) -> some View {
         if library.items.isEmpty && !library.scanning {
             VStack(spacing: 10) {
                 Image(systemName: "waveform.badge.plus").font(.system(size: 30)).foregroundStyle(Theme.tertiary)
                 Text("No sounds yet").font(.system(size: 15, weight: .semibold))
                 Text("Put sound files in the folder below, or add a folder you already have. Each sound is measured once, so you can find it by its shape, tone, length and pitch.")
-                    .font(.system(size: 12.5)).foregroundStyle(Theme.secondary).multilineTextAlignment(.center).frame(maxWidth: 380)
-                HStack {
+                    .font(.system(size: compact ? 11.5 : 12.5)).foregroundStyle(Theme.secondary).multilineTextAlignment(.center).frame(maxWidth: 380)
+                let layout = compact ? AnyLayout(VStackLayout(spacing: 6)) : AnyLayout(HStackLayout())
+                layout {
                     Button("Open the Sounds Folder") { NSWorkspace.shared.open(Library.home) }.buttonStyle(PillButtonStyle(prominent: true))
-                    Button("Add a Folder…") {
-                        if let u = Places.chooseFolder("Choose a folder of sounds to add to the library.", start: Library.home) { library.add(folder: u) }
-                    }
+                    Button("Add a Folder…") { addFolder(library) }
                     .buttonStyle(PillButtonStyle())
                 }
             }
+            .padding(.horizontal, compact ? 12 : 0)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if results.isEmpty && !library.scanning {
             VStack(spacing: 6) {
                 Text("Nothing matches").font(.system(size: 14, weight: .semibold))
-                Text("Loosen the shape, tone or length, or clear the search.").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                Text("Loosen the shape, tone or length, or clear the search.").font(.system(size: 12)).foregroundStyle(Theme.secondary).multilineTextAlignment(.center)
             }
+            .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(spacing: 4) {
+                    LazyVStack(spacing: compact ? 1 : 4) {
                         ForEach(results) { item in
-                            LibraryRow(item: item, picked: library.picked == item.id, like: { like = item }) { library.picked = item.id }
+                            LibraryRow(item: item, picked: library.picked == item.id, compact: compact, like: { like = item }) { library.picked = item.id }
                                 .id(item.id)
                         }
                     }
-                    .padding(.horizontal, 12).padding(.vertical, 10)
+                    .padding(.horizontal, compact ? 6 : 12).padding(.vertical, compact ? 4 : 10)
                 }
+                .glassScrollers()
                 .onChange(of: library.picked) { _, id in if let id { proxy.scrollTo(id) } }
                 .onChange(of: results.map(\.id), initial: true) { _, _ in library.shown = results }
             }
@@ -520,29 +703,45 @@ private struct LibraryRow: View {
     @Environment(Store.self) private var store
     let item: SoundItem
     let picked: Bool
+    var compact = false
     let like: () -> Void
     let pick: () -> Void
+    @State private var over = false
     private var take: Take { Take(file: item.path, duration: item.duration) }
 
     var body: some View {
+        if compact { slim.modifier(Acts(item: item, like: like, pick: pick)) } else { wide.modifier(Acts(item: item, like: like, pick: pick)) }
+    }
+
+    /// One line in the browser: the sound's outline, its name, its length.
+    private var slim: some View {
         let playing = store.auditionPath == item.path
-        HStack(spacing: 10) {
+        return HStack(spacing: 7) {
+            ZStack {
+                if playing { Image(systemName: "speaker.wave.2.fill").font(.system(size: 9)).foregroundStyle(Theme.accent) }
+                else { Envelope(points: item.envelope, color: Theme.accent.opacity(picked ? 0.9 : 0.5)) }
+            }
+            .frame(width: 22, height: 13)
+            Text(item.name).font(.system(size: 12, weight: picked ? .semibold : .regular)).lineLimit(1).truncationMode(.middle)
+                .foregroundStyle(picked ? Color.white : Theme.current.ink.opacity(0.86))
+            Spacer(minLength: 4)
+            Text(shortTime(item.duration)).font(.system(size: 10.5).monospacedDigit()).foregroundStyle(Theme.tertiary)
+        }
+        .padding(.horizontal, 7).frame(height: 25)
+        .background(picked ? Theme.accent.opacity(0.22) : over ? Theme.raised : Color.clear, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+        .contentShape(Rectangle())
+        .onHover { over = $0 }
+        .hint("\(item.name) · \(item.folder) · \(item.shape.title), \(item.tone.title). Click to hear it, drag it onto a track, or double-click to place it at the playhead.")
+    }
+
+    private var wide: some View {
+        let playing = store.auditionPath == item.path
+        return HStack(spacing: 10) {
             Image(systemName: playing ? "stop.fill" : "play.fill").font(.system(size: 9))
                 .frame(width: 24, height: 24)
                 .background(playing ? Theme.accent.opacity(0.4) : Color.white.opacity(0.09), in: Circle())
             // The sound's loudness over its length.
-            Canvas { ctx, size in
-                let n = item.envelope.count
-                guard n > 1 else { return }
-                var path = Path()
-                path.move(to: CGPoint(x: 0, y: size.height))
-                for (i, v) in item.envelope.enumerated() {
-                    path.addLine(to: CGPoint(x: CGFloat(i) / CGFloat(n - 1) * size.width, y: size.height - CGFloat(v) * (size.height - 2)))
-                }
-                path.addLine(to: CGPoint(x: size.width, y: size.height))
-                path.closeSubpath()
-                ctx.fill(path, with: .color(Theme.accent.opacity(picked ? 0.9 : 0.55)))
-            }
+            Envelope(points: item.envelope, color: Theme.accent.opacity(picked ? 0.9 : 0.55))
             .frame(width: 84, height: 22)
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.name).font(.system(size: 12.5, weight: .medium)).lineLimit(1)
@@ -563,6 +762,23 @@ private struct LibraryRow: View {
         .padding(.horizontal, 10).frame(height: 40)
         .background(picked ? Theme.accent.opacity(0.14) : Theme.raised, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(Rectangle())
+    }
+
+    private func tag(_ s: String) -> some View {
+        Text(s).font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.secondary)
+            .padding(.horizontal, 7).frame(height: 19)
+            .background(Color.white.opacity(0.07), in: Capsule())
+    }
+}
+
+/// What every row does, slim or wide: click to hear, double-click to place, drag to the timeline, and a menu.
+private struct Acts: ViewModifier {
+    @Environment(Store.self) private var store
+    let item: SoundItem
+    let like: () -> Void
+    let pick: () -> Void
+    func body(content: Content) -> some View {
+        content
         .onTapGesture(count: 2) { store.place(item) }
         .onTapGesture { pick(); store.audition(path: item.path) }
         .onDrag {
@@ -580,10 +796,52 @@ private struct LibraryRow: View {
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
         }
     }
+}
 
-    private func tag(_ s: String) -> some View {
-        Text(s).font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.secondary)
-            .padding(.horizontal, 7).frame(height: 19)
-            .background(Color.white.opacity(0.07), in: Capsule())
+/// A sound's loudness over its length, filled.
+struct Envelope: View {
+    let points: [Float]
+    let color: Color
+    var body: some View {
+        Canvas { ctx, size in
+            let n = points.count
+            guard n > 1 else { return }
+            var path = Path()
+            path.move(to: CGPoint(x: 0, y: size.height))
+            for (i, v) in points.enumerated() {
+                path.addLine(to: CGPoint(x: CGFloat(i) / CGFloat(n - 1) * size.width, y: size.height - CGFloat(v) * (size.height - 1)))
+            }
+            path.addLine(to: CGPoint(x: size.width, y: size.height))
+            path.closeSubpath()
+            ctx.fill(path, with: .color(color))
+        }
+    }
+}
+
+/// A shape drawn as the outline it names: a spike for a click, a ramp for a rise, bumps for pulsing. nil is every shape.
+struct ShapeGlyph: View {
+    let shape: SoundItem.Shape?
+    private var points: [CGFloat] {
+        switch shape {
+        case .click: [0, 0, 1, 0.1, 0, 0, 0, 0]
+        case .hit: [1, 0.6, 0.36, 0.2, 0.1, 0.05, 0]
+        case .rise: [0, 0.05, 0.12, 0.24, 0.42, 0.68, 1]
+        case .swell: [0, 0.3, 0.75, 1, 0.75, 0.3, 0]
+        case .steady: [0.6, 0.6, 0.6, 0.6, 0.6]
+        case .pulsing: [0, 1, 0, 1, 0, 1, 0]
+        case .mixed: [0.2, 0.9, 0.3, 0.6, 1, 0.2, 0.5]
+        case nil: [1, 1, 1]
+        }
+    }
+    var body: some View {
+        Canvas { ctx, size in
+            let p = points
+            var path = Path()
+            for (i, v) in p.enumerated() {
+                let pt = CGPoint(x: 1 + CGFloat(i) / CGFloat(p.count - 1) * (size.width - 2), y: size.height - 1 - v * (size.height - 2))
+                if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
+            }
+            ctx.stroke(path, with: .foreground, style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
+        }
     }
 }

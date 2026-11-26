@@ -112,8 +112,8 @@ extension VoiceAgent {
             store.peek = str("what")
             return ["ok": true]
         case "strip_width":
-            if let w = a["width"] as? Double { ConsoleMetrics.Size.shared.strip = min(ConsoleMetrics.maxStrip, max(ConsoleMetrics.minStrip, w)) }
-            return ["ok": true, "width": ConsoleMetrics.Size.shared.strip]
+            if let w = a["width"] as? Double { ConsoleMetrics.Size.shared.chosen = w <= 0 ? nil : min(ConsoleMetrics.maxStrip, max(ConsoleMetrics.minStrip, w)) }
+            return ["ok": true, "width": ConsoleMetrics.Size.shared.strip, "fits": ConsoleMetrics.Size.shared.chosen == nil]
         case "menu":
             return try pressMenu((a["title"] as? String) ?? "")
         case "set_helper_voice":

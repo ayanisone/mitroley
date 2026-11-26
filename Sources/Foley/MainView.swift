@@ -9,10 +9,36 @@ struct MainView: View {
     @State private var dragStart: CGFloat?
     @AppStorage("dockHeight") private var dockHeight = 360.0
     @State private var dockStart: CGFloat?
+    @AppStorage("browserWidth") private var browserWidth = 380.0
+    @State private var browserStart: CGFloat?
 
     var body: some View {
         @Bindable var store = store
+        let side = min(520, max(300, CGFloat(browserWidth)))
         HStack(spacing: 0) {
+            if store.browser {
+                LibraryView(side: true)
+                    .frame(width: side)
+                    // One surface with its hairline, run to the top of the window like the panel on the right.
+                    .background {
+                        Theme.panel
+                            .overlay(alignment: .trailing) { Theme.line.frame(width: 1) }
+                            .ignoresSafeArea()
+                    }
+                    .overlay(alignment: .trailing) {
+                        Color.clear.frame(width: 9).contentShape(Rectangle()).offset(x: 4)
+                            .onHover { $0 ? NSCursor.resizeLeftRight.push() : NSCursor.pop() }
+                            .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                                .onChanged { g in
+                                    if browserStart == nil { browserStart = side }
+                                    browserWidth = Double(min(520, max(300, (browserStart ?? side) + g.translation.width)))
+                                }
+                                .onEnded { _ in browserStart = nil })
+                            .onTapGesture(count: 2) { browserWidth = 380 }
+                    }
+                    .transition(reduceMotion ? .opacity : .move(edge: .leading).combined(with: .opacity))
+                    .zIndex(1)
+            }
             GeometryReader { geo in
                 // The dock under the timeline takes its height first; the picture always keeps at least 160 pt.
                 // With the dock open the timeline may go down to 150 pt, so the picture keeps 230.
@@ -22,13 +48,14 @@ struct MainView: View {
                 let tl = min(maxTimeline, max(least, timelineHeight))
                 VStack(spacing: 0) {
                     VideoPane()
-                    // One handle resizes picture against timeline, tracking the pointer exactly.
+                    // One handle resizes picture against timeline. The drag is measured against the window: measured against the
+                    // handle itself, which moves as it is dragged, the height chased its own tail and flickered.
                     Rectangle()
                         .fill(Theme.line)
                         .frame(height: 1)
                         .overlay(Rectangle().fill(Color.clear).frame(height: 9).contentShape(Rectangle())
                             .onHover { $0 ? NSCursor.resizeUpDown.push() : NSCursor.pop() }
-                            .gesture(DragGesture(minimumDistance: 0)
+                            .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .global)
                                 .onChanged { g in
                                     if dragStart == nil { dragStart = tl }
                                     timelineHeight = min(maxTimeline, max(180, (dragStart ?? tl) - g.translation.height))
@@ -37,14 +64,14 @@ struct MainView: View {
                     TimelineView()
                         .frame(height: tl)
                         // Tell the flag where the panels are, so it goes out of focus behind them.
-                        .onChange(of: tl + dock, initial: true) { _, h in FlagLayout.bottom = h + (dock > 0 ? 2 : 1); FlagLayout.inspector = Metrics.inspector }
+                        .onChange(of: tl + dock, initial: true) { _, h in FlagLayout.bottom = h + (dock > 0 ? 2 : 1) }
                     if dock > 0 {
                         Rectangle()
                             .fill(Theme.line)
                             .frame(height: 1)
                             .overlay(Rectangle().fill(Color.clear).frame(height: 9).contentShape(Rectangle())
                                 .onHover { $0 ? NSCursor.resizeUpDown.push() : NSCursor.pop() }
-                                .gesture(DragGesture(minimumDistance: 0)
+                                .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .global)
                                     .onChanged { g in
                                         if dockStart == nil { dockStart = dock }
                                         dockHeight = Double(min(max(326, geo.size.height - 380), max(326, (dockStart ?? dock) - g.translation.height)))
@@ -55,19 +82,27 @@ struct MainView: View {
                     }
                 }
             }
-            Group {
-                if store.showClaude { ClaudePanel() } else { Inspector() }
-            }
-            .frame(width: Metrics.inspector)
-            // The panel and its hairline edge are one surface, so they run to the top of the window
-            // together and the edge lines up through the toolbar.
-            .background {
-                Theme.panel
-                    .overlay(alignment: .leading) { Theme.line.frame(width: 1) }
-                    .ignoresSafeArea()
+            if store.sideOpen {
+                Group {
+                    if store.showClaude { ClaudePanel() } else { Inspector() }
+                }
+                .frame(width: Metrics.inspector)
+                // The panel and its hairline edge are one surface, so they run to the top of the window
+                // together and the edge lines up through the toolbar.
+                .background {
+                    Theme.panel
+                        .overlay(alignment: .leading) { Theme.line.frame(width: 1) }
+                        .ignoresSafeArea()
+                }
+                .transition(reduceMotion ? .opacity : .move(edge: .trailing).combined(with: .opacity))
+                .zIndex(1)
             }
         }
         .background { Backdrop().ignoresSafeArea() }
+        .onChange(of: store.browser ? side : 0, initial: true) { _, w in FlagLayout.left = w }
+        .onChange(of: store.sideOpen, initial: true) { _, open in FlagLayout.inspector = open ? Metrics.inspector : 0 }
+        .animation(Motion.ui(reduceMotion), value: store.browser)
+        .animation(Motion.ui(reduceMotion), value: store.sideOpen)
         .navigationTitle(store.project.name)
         // No separate title-bar material: the picture side and the panel side each keep their own colour to the top.
         .toolbarBackground(.hidden, for: .windowToolbar)
@@ -76,8 +111,8 @@ struct MainView: View {
                 RoomButton()
                 Button { store.toggleDock("mixer") } label: { Image(systemName: "slider.vertical.3") }
                     .hint("Mixer under the timeline: faders, buses, routing and sidechain (⌥⌘M)")
-                Button { store.toggleDock("library") } label: { Image(systemName: "square.stack.3d.up") }
-                    .hint("Library under the timeline: your own sounds, ready to drag onto a track (⌥⌘L)")
+                Button { store.browser.toggle() } label: { Image(systemName: "sidebar.left") }
+                    .hint("Library down the left side: your own sounds, ready to drag onto a track (⌥⌘L)")
                 Button { store.showClaude.toggle() } label: {
                     Label("Claude", systemImage: "sparkle")
                 }
@@ -90,6 +125,8 @@ struct MainView: View {
                     Label("Settings", systemImage: "gearshape")
                 }
                 .hint("API keys and models (⌘,)")
+                Button { store.toggleSide() } label: { Image(systemName: "sidebar.right") }
+                    .hint(store.sideOpen ? "Put the panel on the right away, for more room (⌥⌘I)" : "Bring back the panel on the right (⌥⌘I)")
             }
         }
         .overlay(alignment: .top) { VoiceAgentStrip().animation(Motion.ui(reduceMotion), value: store.voiceAgent.isOn) }
@@ -261,7 +298,15 @@ struct VideoPane: View {
             }
         }
         .overlay(alignment: .bottom) {
-            TransportBar().padding(.bottom, Self.gap)
+            // With the browser open there is less room: the bar sheds what matters least before it would run off the pane.
+            ViewThatFits(in: .horizontal) {
+                TransportBar()
+                TransportBar(tight: 1)
+                TransportBar(tight: 2)
+                TransportBar(tight: 3)
+            }
+            .padding(.horizontal, 10)
+            .padding(.bottom, Self.gap)
         }
         // The editing tools: a column at the left of the picture, level with its middle.
         .overlay(alignment: .leading) {
@@ -304,6 +349,9 @@ struct VideoPane: View {
 struct TransportBar: View {
     static let height: CGFloat = 52
     @Environment(Store.self) private var store
+    /// How much has been left out to fit a narrow pane: 1 drops the film's volume slider, 2 the meter as well,
+    /// 3 the Mine and Film switch too (it is still on the \ key).
+    var tight = 0
 
     // Everything in the bar sits on one centre line, 16 pt apart, with 16 pt at both ends.
     var body: some View {
@@ -359,25 +407,30 @@ struct TransportBar: View {
                         .frame(width: 24, height: 36)
                 }
                 .buttonStyle(PressStyle(scale: 0.88))
-                Slide(value: store.project.videoVolume, range: 0...1, tint: Theme.secondary, reset: 0, begin: { store.beginGesture() }) { v in
-                    store.live { $0.videoVolume = v }
+                if tight < 1 {
+                    Slide(value: store.project.videoVolume, range: 0...1, tint: Theme.secondary, reset: 0, begin: { store.beginGesture() }) { v in
+                        store.live { $0.videoVolume = v }
+                    }
+                    .frame(width: 64)
                 }
-                .frame(width: 64)
             }
             .disabled(store.project.video == nil || store.player.filmOnly)
             .opacity(store.project.video == nil ? 0.35 : store.player.filmOnly ? 0.5 : 1)
             // Flip between what the film came with and what was made here, to compare them.
-            SegmentedPill(options: [(false, "Mine"), (true, "Film")], selection: store.player.filmOnly, segmentWidth: 44, height: 26, size: 11.5) { store.player.filmOnly = $0 }
-                .disabled(store.project.video == nil)
-                .opacity(store.project.video == nil ? 0.35 : 1)
-                .hint("Compare: Mine plays the sound made here. Film plays only the video's own sound. Press \\ to flip.")
-            .hint("The video's own sound. Click the icon to mute or restore it.")
+            if tight < 3 {
+                SegmentedPill(options: [(false, "Mine"), (true, "Film")], selection: store.player.filmOnly, segmentWidth: 44, height: 26, size: 11.5) { store.player.filmOnly = $0 }
+                    .disabled(store.project.video == nil)
+                    .opacity(store.project.video == nil ? 0.35 : 1)
+                    .hint("Compare: Mine plays the sound made here. Film plays only the video's own sound. Press \\ to flip.")
+            }
             if store.versionList.count > 1 {
                 Rectangle().fill(Theme.line).frame(width: 1, height: 20)
                 VersionSwitch()
             }
-            Rectangle().fill(Theme.line).frame(width: 1, height: 20)
-            MasterMeter()
+            if tight < 2 {
+                Rectangle().fill(Theme.line).frame(width: 1, height: 20)
+                MasterMeter()
+            }
             Rectangle().fill(Theme.line).frame(width: 1, height: 20)
             Menu {
                 ForEach(MixFormat.allCases) { f in

@@ -94,6 +94,9 @@ struct ThemePicker: View {
             }
             .buttonStyle(PillButtonStyle())
             if has { Button("Remove Picture") { Backdrops.set(nil, for: store.theme); Theme.Look.shared.refresh() }.buttonStyle(PillButtonStyle()) }
+            if Backdrops.hasShipped(store.theme), !has || Backdrops.isOwn(store.theme) {
+                Button("Put Back the Original") { Backdrops.restore(store.theme); Theme.Look.shared.refresh() }.buttonStyle(PillButtonStyle())
+            }
         }
         .id(stamp)
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 8)], spacing: 8) {

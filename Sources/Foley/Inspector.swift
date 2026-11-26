@@ -12,6 +12,7 @@ struct Inspector: View {
             }
             .padding(16)
         }
+        .glassScrollers()
         .animation(Motion.quick(reduceMotion), value: store.selection)
     }
 

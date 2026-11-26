@@ -43,6 +43,7 @@ struct MixerView: View {
                     }
                     .padding(docked ? 10 : 14)
                 }
+                .glassScrollers()
             }
             if !docked {
                 Rectangle().fill(Theme.line).frame(height: 1)
@@ -154,6 +155,8 @@ private func stripOuter(_ w: CGFloat, compact: Bool) -> CGFloat {
     @ObservationIgnored var bodies: [String: Body] = [:]
     @ObservationIgnored var rests: [String: CGPoint] = [:]
     @ObservationIgnored var pointer: CGPoint?
+    /// A cable in the hand: its weight goes where the hand is, and keeps the hand's speed when it is let go.
+    @ObservationIgnored var held: (key: String, at: CGPoint)?
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var last = CACurrentMediaTime()
 
@@ -180,6 +183,14 @@ private func stripOuter(_ w: CGFloat, compact: Bool) -> CGFloat {
         var moving = false
         for key in Array(bodies.keys) {
             guard let rest = rests[key], var b = bodies[key] else { bodies[key] = nil; continue }
+            if let h = held, h.key == key {
+                let vx = (h.at.x - b.p.x) / max(dt, 0.004), vy = (h.at.y - b.p.y) / max(dt, 0.004)
+                b.v = CGVector(dx: b.v.dx * 0.6 + min(1400, max(-1400, vx)) * 0.4, dy: b.v.dy * 0.6 + min(1400, max(-1400, vy)) * 0.4)
+                b.p = h.at
+                bodies[key] = b
+                moving = true
+                continue
+            }
             // A soft spring back to where the cable hangs, lightly damped so it swings past and returns.
             var ax = (rest.x - b.p.x) * 150 - b.v.dx * 11, ay = (rest.y - b.p.y) * 150 - b.v.dy * 11
             if let m = pointer {
@@ -214,10 +225,17 @@ struct Cables: View {
     @State private var pulling: (from: Int, at: CGPoint)?
     /// How cables are drawn: 0 hanging, 1 taut, 2 stepped.
     @AppStorage("cableShape") private var shape = 0
+    /// How cables are coloured: 0 fading from the track's colour into where it goes, 1 a string of dots, 2 one flat colour.
+    @AppStorage("cableLook") private var look = 0
+    /// A cable held by its middle: which one, the track whose output it is, and where the hand has it.
+    @State private var holding: (key: String, track: UUID?, at: CGPoint)?
+    @State private var overCable = false
+    /// The jack the pointer is on.
+    @State private var overPort: Int?
 
     private struct Port { let x: CGFloat; let track: UUID?; let bus: UUID?; let master: Bool }
-    private static let top: CGFloat = 7
-    private var height: CGFloat { console && compact ? 46 : 66 }
+    private static let top: CGFloat = 12
+    private var height: CGFloat { console && compact ? 54 : 74 }
     /// Strip width, the gap between strips, the extra step at a divider, and the master's width.
     private var geometry: (w: CGFloat, gap: CGFloat, divider: CGFloat, master: CGFloat) {
         console ? (ConsoleMetrics.strip, 0, ConsoleMetrics.divider, ConsoleMetrics.master)
@@ -243,24 +261,75 @@ struct Cables: View {
         return i
     }
 
+    /// One cable: where it runs, its colours at each end, and the track whose output it is (those can be replugged by hand).
+    private struct Link { let key: String; let a: CGPoint; let b: CGPoint; let color: Color; let end: Color; let strong: Bool; let dashed: Bool; let track: UUID? }
+
+    private func links(_ ports: [Port], selected: UUID?) -> [Link] {
+        let p = store.project
+        func x(track id: UUID?) -> CGFloat? { id.flatMap { i in ports.first { $0.track == i }?.x } }
+        func x(bus id: UUID?) -> CGFloat? { id.flatMap { i in ports.first { $0.bus == i }?.x } }
+        func at(_ x: CGFloat) -> CGPoint { CGPoint(x: x, y: Self.top) }
+        let master = ports.last?.x ?? 0
+        let bus = Color(white: 0.78), ink = Theme.current.ink
+        var out: [Link] = []
+        for t in p.tracks {
+            guard let a = x(track: t.id) else { continue }
+            let strong = selected == nil || selected == t.id
+            out.append(Link(key: "t-\(t.id)", a: at(a), b: at(x(bus: t.groupID) ?? master), color: t.kind.color, end: t.groupID == nil ? ink : bus, strong: strong, dashed: false, track: t.id))
+            if let d = t.duck {
+                let sources = d.source.map { [$0] } ?? p.tracks.filter { $0.kind == .dialogue && $0.id != t.id }.map(\.id)
+                for sid in sources { if let b = x(track: sid) { out.append(Link(key: "s-\(sid)-\(t.id)", a: at(b), b: at(a), color: Theme.accent, end: Theme.accent, strong: strong, dashed: true, track: nil)) } }
+            }
+        }
+        for g in p.groups ?? [] { if let a = x(bus: g.id) { out.append(Link(key: "b-\(g.id)", a: at(a), b: at(master), color: bus, end: ink, strong: selected == nil, dashed: false, track: nil)) } }
+        return out
+    }
+
+    private func sag(_ l: Link) -> CGFloat { min(height - Self.top - 6, 15 + abs(l.b.x - l.a.x) * 0.055) * (l.dashed ? 0.62 : 1) }
+
+    /// The cable nearest a point, if the point is on it or close beside it.
+    private func cable(at point: CGPoint, in links: [Link]) -> Link? {
+        var best: (Link, CGFloat)?
+        for l in links {
+            let m = sim.bodies[l.key]?.p ?? CGPoint(x: (l.a.x + l.b.x) / 2, y: max(l.a.y, l.b.y) + sag(l))
+            let c = CGPoint(x: 2 * m.x - (l.a.x + l.b.x) / 2, y: 2 * m.y - (l.a.y + l.b.y) / 2)
+            var d = CGFloat.infinity
+            for i in 1..<20 {
+                let t = CGFloat(i) / 20, u = 1 - t
+                d = min(d, hypot(u * u * l.a.x + 2 * u * t * c.x + t * t * l.b.x - point.x, u * u * l.a.y + 2 * u * t * c.y + t * t * l.b.y - point.y))
+            }
+            if d < 12, d < (best?.1 ?? .infinity) { best = (l, d) }
+        }
+        return best?.0
+    }
+
+    /// The jack under a point, with a generous reach so it is easy to take hold of.
+    private func jack(_ ports: [Port], at point: CGPoint) -> Int? {
+        guard point.y <= Self.top + 15, let i = nearest(ports, to: point.x, within: 16) else { return nil }
+        return i
+    }
+
     var body: some View {
         let p = store.project
         let ports = self.ports
         let width = (ports.last?.x ?? 0) + geometry.master / 2
         var selected: UUID? { if case .track(let id) = store.selection { return id } else { return nil } }
+        let links = self.links(ports, selected: selected)
         // With nothing selected every cable is shown quietly; select a track and its cables stand out from the rest.
-        let quiet = selected == nil && pulling == nil
-        let target = pulling.flatMap { pull in nearest(ports, to: pull.at.x).flatMap { $0 == pull.from ? nil : $0 } }
+        let quiet = selected == nil && pulling == nil && holding == nil
+        // A cable held by its middle and carried up to a socket plugs in there, the same as one pulled out of its own socket.
+        let carried: (from: Int, at: CGPoint)? = pulling ?? holding.flatMap { h in
+            guard let id = h.track, h.at.y < Self.top + 15, let i = ports.firstIndex(where: { $0.track == id }) else { return nil }
+            return (i, h.at)
+        }
+        let target = carried.flatMap { pull in nearest(ports, to: pull.at.x).flatMap { $0 == pull.from ? nil : $0 } }
         Canvas { ctx, size in
             _ = sim.tick
             let top = Self.top
-            func x(track id: UUID?) -> CGFloat? { id.flatMap { i in ports.first { $0.track == i }?.x } }
-            func x(bus id: UUID?) -> CGFloat? { id.flatMap { i in ports.first { $0.bus == i }?.x } }
-            let master = ports.last?.x ?? 0
-            func cable(_ key: String, _ a: CGPoint, _ b: CGPoint, _ color: Color, strong: Bool, dashed: Bool = false) {
-                let sag = min(size.height - top - 6, 15 + abs(b.x - a.x) * 0.055) * (dashed ? 0.62 : 1)
-                let rest = CGPoint(x: (a.x + b.x) / 2, y: max(a.y, b.y) + sag)
-                let m = sim.middle(key, rest: rest, from: a)
+            func draw(_ l: Link, lit forced: Bool = false) {
+                let rest = CGPoint(x: (l.a.x + l.b.x) / 2, y: max(l.a.y, l.b.y) + sag(l))
+                let m = sim.middle(l.key, rest: rest, from: l.a)
+                let a = l.a, b = l.b
                 var path = Path()
                 path.move(to: a)
                 switch shape {
@@ -274,69 +343,128 @@ struct Cables: View {
                     // Hanging: a curve that passes through the weight.
                     path.addQuadCurve(to: b, control: CGPoint(x: 2 * m.x - (a.x + b.x) / 2, y: 2 * m.y - (a.y + b.y) / 2))
                 }
-                let lit = strong && !quiet
+                let lit = forced || (l.strong && !quiet)
+                let o = lit ? 0.95 : (l.strong ? 0.46 : 0.16)
+                // How the cable is coloured: fading from the track's colour into where it goes, a string of dots, or one flat colour.
+                let dots = look == 1 && !l.dashed
+                let shading: GraphicsContext.Shading = look == 0 && !l.dashed && abs(b.x - a.x) > 2
+                    ? .linearGradient(Gradient(stops: [.init(color: l.color.opacity(o), location: 0), .init(color: l.color.opacity(o), location: 0.25), .init(color: l.end.opacity(o * 0.85), location: 1)]), startPoint: a, endPoint: b)
+                    : .color(l.color.opacity(o))
+                let wide: CGFloat = dots ? (lit ? 2.7 : 2.1) : (lit ? 1.7 : 1.1)
+                let dash: [CGFloat] = l.dashed ? [5, 4] : dots ? [0.01, lit ? 6 : 5] : []
                 // Fine lines, as on a patch diagram: only the cable in question is bright, and only it casts a shadow.
-                if lit { ctx.stroke(path, with: .color(.black.opacity(0.4)), style: StrokeStyle(lineWidth: 3.6, lineCap: .round)) }
-                ctx.stroke(path, with: .color(color.opacity(lit ? 0.95 : (strong ? 0.42 : 0.13))),
-                           style: StrokeStyle(lineWidth: lit ? 1.7 : 1.1, lineCap: .round, lineJoin: .round, dash: dashed ? [5, 4] : []))
-                if dashed {
+                if lit { ctx.stroke(path, with: .color(.black.opacity(0.4)), style: StrokeStyle(lineWidth: wide + 1.9, lineCap: .round, dash: dots ? dash : [])) }
+                ctx.stroke(path, with: shading, style: StrokeStyle(lineWidth: wide, lineCap: .round, lineJoin: .round, dash: dash))
+                if l.dashed {
                     var head = Path()
                     head.move(to: CGPoint(x: b.x, y: b.y + 2)); head.addLine(to: CGPoint(x: b.x - 4, y: b.y + 10)); head.addLine(to: CGPoint(x: b.x + 4, y: b.y + 10)); head.closeSubpath()
-                    ctx.fill(head, with: .color(color.opacity(strong && !quiet ? 0.95 : (strong ? 0.5 : 0.18))))
+                    ctx.fill(head, with: .color(l.color.opacity(lit ? 0.95 : (l.strong ? 0.5 : 0.18))))
+                }
+                // Where the hand has it.
+                if holding?.key == l.key, target == nil {
+                    let grip = CGRect(x: m.x - 3.5, y: m.y - 3.5, width: 7, height: 7)
+                    ctx.fill(Path(ellipseIn: grip), with: .color(l.color))
+                    ctx.stroke(Path(ellipseIn: grip.insetBy(dx: -2.5, dy: -2.5)), with: .color(l.color.opacity(0.35)), lineWidth: 1)
                 }
             }
-            func at(_ x: CGFloat) -> CGPoint { CGPoint(x: x, y: top) }
-            for t in p.tracks {
-                guard let a = x(track: t.id) else { continue }
-                let strong = selected == nil || selected == t.id
-                // The cable being pulled out of this socket is drawn from the pointer instead.
-                if pulling.map({ ports[$0.from].track == t.id }) != true || target.map({ ports[$0].track != nil }) == true {
-                    cable("t-\(t.id)", at(a), at(x(bus: t.groupID) ?? master), t.kind.color, strong: strong)
+            for l in links {
+                // The cable being carried to another socket is drawn from the pointer instead.
+                if let c = carried, l.track != nil, l.track == ports[c.from].track, target != nil || pulling != nil {
+                    if target.map({ ports[$0].track != nil }) == true { draw(l) }
+                    continue
                 }
-                if let d = t.duck {
-                    let sources = d.source.map { [$0] } ?? p.tracks.filter { $0.kind == .dialogue && $0.id != t.id }.map(\.id)
-                    for sid in sources { if let b = x(track: sid) { cable("s-\(sid)-\(t.id)", at(b), at(a), Theme.accent, strong: strong, dashed: true) } }
-                }
+                draw(l, lit: holding?.key == l.key)
             }
-            for g in p.groups ?? [] { if let a = x(bus: g.id) { cable("b-\(g.id)", at(a), at(master), Color(white: 0.78), strong: selected == nil) } }
-            if let pull = pulling {
+            if let pull = carried, pulling != nil || target != nil {
                 let from = ports[pull.from]
                 let color = from.track.flatMap { id in p.tracks.first { $0.id == id }?.kind.color } ?? Color(white: 0.78)
-                let end = target.map { at(ports[$0].x) } ?? pull.at
-                cable("pull", at(from.x), end, target.map { ports[$0].track != nil } == true ? Theme.accent : color, strong: true, dashed: target.map { ports[$0].track != nil } == true)
+                let end = target.map { CGPoint(x: ports[$0].x, y: top) } ?? pull.at
+                let side = target.map { ports[$0].track != nil } == true
+                draw(Link(key: "pull", a: CGPoint(x: from.x, y: top), b: end, color: side ? Theme.accent : color, end: side ? Theme.accent : Theme.current.ink, strong: true, dashed: side, track: nil), lit: true)
             }
+            // The plug in the hand: the end of the cable that came out of its jack.
+            if let pull = pulling, target == nil {
+                let color = ports[pull.from].track.flatMap { id in p.tracks.first { $0.id == id }?.kind.color } ?? Color(white: 0.78)
+                let tip = CGRect(x: pull.at.x - 4, y: pull.at.y - 4, width: 8, height: 8)
+                ctx.fill(Path(ellipseIn: tip.insetBy(dx: -1.5, dy: -1.5)), with: .color(.black.opacity(0.45)))
+                ctx.fill(Path(ellipseIn: tip), with: .color(color))
+                ctx.fill(Path(ellipseIn: CGRect(x: pull.at.x - 2.2, y: pull.at.y - 2.6, width: 2.4, height: 2.4)), with: .color(.white.opacity(0.6)))
+            }
+            // Each socket is a small jack: a metal collar, the hole, and the coloured tip of whatever is plugged into it.
             for (i, port) in ports.enumerated() {
-                let lit = (port.track != nil && port.track == selected) || target == i
-                let r: CGFloat = target == i ? 6.5 : 4.5
-                let rect = CGRect(x: port.x - r, y: top - r, width: r * 2, height: r * 2)
-                ctx.fill(Path(ellipseIn: rect), with: .color(Color(white: 0.09)))
-                ctx.stroke(Path(ellipseIn: rect), with: .color(lit ? Theme.accent : Color.white.opacity(port.track == nil ? 0.8 : 0.5)), lineWidth: target == i ? 2 : 1.5)
+                let aimed = target == i, hover = overPort == i && pulling == nil && holding == nil
+                let lit = (port.track != nil && port.track == selected) || aimed || hover
+                let out = pulling?.from == i   // its plug is in the hand
+                let r: CGFloat = aimed ? 7.5 : hover ? 7 : 5.8
+                let c = CGPoint(x: port.x, y: top)
+                func ring(_ r: CGFloat) -> Path { Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)) }
+                ctx.fill(ring(r + 1.2), with: .color(.black.opacity(0.5)))
+                ctx.fill(ring(r), with: .linearGradient(Gradient(colors: [Color(white: 0.62), Color(white: 0.2)]), startPoint: CGPoint(x: c.x, y: c.y - r), endPoint: CGPoint(x: c.x, y: c.y + r)))
+                ctx.stroke(ring(r - 0.4), with: .color(.white.opacity(0.22)), lineWidth: 0.6)
+                ctx.fill(ring(r * 0.56), with: .color(Color(white: 0.04)))
+                if !out {
+                    let color: Color = port.track.flatMap { id in p.tracks.first { $0.id == id }?.kind.color } ?? (port.master ? Theme.current.ink : Color(white: 0.78))
+                    ctx.fill(ring(r * 0.4), with: .color(color.opacity(port.track == nil || selected == nil || port.track == selected ? 1 : 0.55)))
+                    ctx.fill(Path(ellipseIn: CGRect(x: c.x - r * 0.24, y: c.y - r * 0.3, width: r * 0.24, height: r * 0.24)), with: .color(.white.opacity(0.55)))
+                }
+                if lit { ctx.stroke(ring(r + 1.6), with: .color(Theme.accent.opacity(aimed || hover ? 1 : 0.8)), lineWidth: 1.3) }
             }
         }
         .frame(width: width, height: height)
         .contentShape(Rectangle())
         .onContinuousHover { phase in
             switch phase {
-            case .active(let at): sim.pointer = at; sim.wake()
-            case .ended: sim.pointer = nil
+            case .active(let at):
+                sim.pointer = at; sim.wake()
+                // An open hand over a cable says it can be taken hold of.
+                let port = jack(ports, at: at)
+                if port != overPort { overPort = port }
+                let on = port != nil || cable(at: at, in: links) != nil
+                if on != overCable { overCable = on; if on { NSCursor.openHand.push() } else { NSCursor.pop() } }
+            case .ended:
+                sim.pointer = nil
+                if overPort != nil { overPort = nil }
+                if overCable { overCable = false; NSCursor.pop() }
+            }
+        }
+        // Right-click a jack for the routing menu, as in FL: what the selected track does to the strip you clicked.
+        // These sit inside the drag below, not over it: laid over it they took every press on a jack and the plug never came out.
+        .overlay(alignment: .topLeading) {
+            ForEach(Array(ports.enumerated()), id: \.offset) { _, port in
+                Color.clear.frame(width: 30, height: 26).contentShape(Rectangle())
+                    .contextMenu { menu(for: port, selected: selected) }
+                    .position(x: port.x, y: Self.top)
             }
         }
         .gesture(DragGesture(minimumDistance: 0)
             .onChanged { g in
-                if pulling == nil {
-                    guard let i = nearest(ports, to: g.startLocation.x), !ports[i].master else { return }
-                    pulling = (i, g.location)
-                } else {
-                    pulling?.at = g.location
+                if pulling == nil, holding == nil {
+                    if let i = jack(ports, at: g.startLocation) {
+                        // From a jack: its plug comes out with the pointer.
+                        if !ports[i].master { pulling = (i, g.location) }
+                    } else if let l = cable(at: g.startLocation, in: links) {
+                        // From anywhere along a cable: it comes with the hand, and swings back when let go.
+                        holding = (l.key, l.track, g.location)
+                        NSCursor.closedHand.push()
+                    } else if let i = nearest(ports, to: g.startLocation.x), !ports[i].master {
+                        pulling = (i, g.location)
+                    } else { return }
                 }
+                let at = CGPoint(x: min(width - 2, max(2, g.location.x)), y: min(height - 3, max(Self.top, g.location.y)))
+                if pulling != nil { pulling?.at = g.location }
+                if holding != nil { holding?.at = at; sim.held = (holding!.key, at) }
                 sim.pointer = nil
                 sim.wake()
             }
             .onEnded { g in
-                defer { pulling = nil; sim.forget("pull"); sim.wake() }
+                let wasHolding = holding != nil
+                defer {
+                    if wasHolding { NSCursor.pop() }
+                    pulling = nil; holding = nil; sim.held = nil; sim.forget("pull"); sim.wake()
+                }
                 let moved = hypot(g.translation.width, g.translation.height) > 5
                 guard moved else { tap(ports, at: g.startLocation.x, selected: selected); return }
-                guard let pull = pulling, let j = nearest(ports, to: g.location.x), j != pull.from else { return }
+                guard let pull = carried, let j = target, j != pull.from, pulling != nil || g.location.y < Self.top + 15 else { return }
                 let from = ports[pull.from], to = ports[j]
                 guard let source = from.track else { return }   // a bus always plays into the master
                 if to.master { store.setGroup(nil, for: [source]) }
@@ -347,18 +475,11 @@ struct Cables: View {
                     Task { await store.setDucking(other, on: !already, source: .some(source)) }
                 }
             })
-        // Right-click a socket for the routing menu, as in FL: what the selected track does to the strip you clicked.
-        .overlay(alignment: .topLeading) {
-            ForEach(Array(ports.enumerated()), id: \.offset) { _, port in
-                Color.clear.frame(width: 30, height: 26).contentShape(Rectangle())
-                    .contextMenu { menu(for: port, selected: selected) }
-                    .position(x: port.x, y: Self.top + 4)
-            }
-        }
         .onChange(of: shape) { _, _ in sim.wake() }
+        .onChange(of: look) { _, _ in sim.wake() }
         .onChange(of: MixGraph.busSignature(p) + p.tracks.map { "\($0.groupID?.uuidString ?? "-")\($0.duck?.source?.uuidString ?? ($0.duck == nil ? "" : "v"))" }.joined()) { _, _ in sim.wake() }
         .onAppear { sim.wake() }
-        .hint("Drag from a track's socket to a bus or the master to send it there, or onto another track to sidechain. Or select a track and right-click any socket for the routing menu and the cable shapes.")
+        .hint("Pull the plug out of a track's jack and carry it to a bus or the master to send it there, or onto another track to sidechain. Any cable can also be taken by its middle and pulled: it swings back when you let go. Right-click a jack for the routing menu and how the cables look.")
         .accessibilityLabel("Routing: each track's output")
     }
 
@@ -404,6 +525,11 @@ struct Cables: View {
         Picker("Cable Shape", selection: $shape) {
             Text("Hanging").tag(0)
             Text("Stepped").tag(2)
+        }
+        Picker("Cable Look", selection: $look) {
+            Text("Fading").tag(0)
+            Text("Dotted").tag(1)
+            Text("Flat Colour").tag(2)
         }
     }
 

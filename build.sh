@@ -20,6 +20,8 @@ if [ ! -f Support/AppIcon.icns ]; then
   rm -rf "$TMP"
 fi
 cp Support/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+# The picture each theme hangs behind the window.
+if [ -d Support/Backdrops ]; then cp -R Support/Backdrops "$APP/Contents/Resources/Backdrops"; fi
 codesign --force --sign - "$APP/Contents/MacOS/foley-mcp" 2>/dev/null
 codesign --force --sign - "$APP" 2>/dev/null
 echo "Built $APP"

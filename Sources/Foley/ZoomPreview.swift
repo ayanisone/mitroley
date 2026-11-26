@@ -17,7 +17,9 @@ struct ZoomPreview: View {
             Canvas { ctx, size in
                 draw(&ctx, size, pps: pps, x0: x0, scrollY: scrollY)
             }
-            .background(Theme.panel)
+            // With a picture behind the window the timeline already has its tint; a second one here would turn the lanes
+            // solid for as long as the pinch lasts.
+            .background(Theme.Look.shared.glass ? Color.clear : Theme.panel)
             .allowsHitTesting(false)
         }
     }
@@ -85,7 +87,7 @@ struct ZoomPreview: View {
         }
 
         // Pinned strip: ruler, filmstrip, scenes.
-        ctx.fill(Path(CGRect(x: 0, y: 0, width: size.width, height: pinned)), with: .color(Theme.panel))
+        ctx.fill(Path(CGRect(x: 0, y: 0, width: size.width, height: pinned)), with: .color(Theme.Look.shared.glass ? Theme.current.panel.opacity(0.62) : Theme.panel))
         drawRuler(&ctx, p, size: size, pps: pps, x0: x0)
         drawFilm(&ctx, p, top: Metrics.ruler, size: size, pps: pps, x: x)
         drawScenes(&ctx, p, top: Metrics.ruler + Metrics.film, right: right, size: size, pps: pps, x: x)

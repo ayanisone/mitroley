@@ -75,7 +75,7 @@ struct FoleyApp: App {
                 .environment(store)
                 .preferredColorScheme(.dark)
                 .tint(Theme.accent)
-                .frame(minWidth: 1080, minHeight: 680)
+                .frame(minWidth: 772 + (store.browser ? 300 : 0) + (store.sideOpen ? Metrics.inspector : 0), minHeight: 680)
                 // In the window that is already open, not a second one.
                 .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
                 // Double-clicking a session in Finder, or dropping one on the Dock icon, opens it.
@@ -129,7 +129,9 @@ struct FoleyApp: App {
             CommandMenu("Session") {
                 RoomButton(menu: true)
                 Button(store.dock == "mixer" ? "Hide Mixer" : "Show Mixer") { store.toggleDock("mixer") }.keyboardShortcut("m", modifiers: [.command, .option])
-                Button(store.dock == "library" ? "Hide Library" : "Show Library") { store.toggleDock("library") }.keyboardShortcut("l", modifiers: [.command, .option])
+                Button(store.browser ? "Hide Library" : "Show Library") { store.browser.toggle() }.keyboardShortcut("l", modifiers: [.command, .option])
+                Button(store.sideOpen ? "Hide the Right Panel" : "Show the Right Panel") { store.toggleSide() }.keyboardShortcut("i", modifiers: [.command, .option])
+                Button(store.dock == "library" ? "Hide Library Under the Timeline" : "Library Under the Timeline") { store.toggleDock("library") }
                 WindowButton(id: "picture", title: "Picture in Its Own Window", symbol: "", key: "p", help: "", menu: true, plain: true)
                 WindowButton(id: "mixer", title: "Mixer in Its Own Window", symbol: "", key: "m", help: "", menu: true, plain: true)
                 WindowButton(id: "library", title: "Library in Its Own Window", symbol: "", key: "l", help: "", menu: true, plain: true)

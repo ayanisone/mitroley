@@ -7,13 +7,27 @@ import SwiftUI
 /// own stripe, a lit key, the meter. The cards it replaces are still there (Settings › Mixer).
 enum ConsoleMetrics {
     /// How wide a strip is. Drag the line between two strips to change it; every strip follows.
-    static var strip: CGFloat { CGFloat(min(maxStrip, max(minStrip, Size.shared.strip))) }
+    static var strip: CGFloat { CGFloat(Size.shared.strip) }
     /// The one width every strip and the cables read. Held in an observed object, so all of them are redrawn together
     /// on every step of a drag; kept between launches.
     @Observable final class Size {
         static let shared = Size()
-        var strip = UserDefaults.standard.object(forKey: "consoleStrip") as? Double ?? 64 { didSet { UserDefaults.standard.set(strip, forKey: "consoleStrip") } }
+        /// A width chosen by dragging. nil: the strips share out the width of the mixer, so they fill it from side to side.
+        var chosen = UserDefaults.standard.object(forKey: "consoleStripChosen") as? Double {
+            didSet { if let chosen { UserDefaults.standard.set(chosen, forKey: "consoleStripChosen") } else { UserDefaults.standard.removeObject(forKey: "consoleStripChosen") } }
+        }
+        /// The width that fills the mixer just now.
+        var fitted = 64.0
+        var strip: Double { min(maxStrip, max(chosen == nil ? fitStrip : minStrip, chosen ?? fitted)) }
+        /// Works out the width that fills `width` points with this many strips beside the master.
+        func fit(width: CGFloat, strips: Int, buses: Bool) {
+            let room = Double(width) - 20 - Double(divider) * (buses ? 2 : 1) - 20
+            let next = (room / Double(strips + 1) * 2).rounded(.down) / 2
+            if abs(next - fitted) > 0.2 { fitted = next }
+        }
     }
+    /// The narrowest a strip is let go when fitting: under this the keys no longer sit side by side, and the mixer scrolls.
+    static let fitStrip = 52.0
     static var master: CGFloat { strip + 20 }
     static let minStrip = 56.0, maxStrip = 150.0
     /// The step between the tracks, the buses and the master.
@@ -38,6 +52,7 @@ struct ConsoleMixer: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
+                GeometryReader { geo in
                 ScrollView(.horizontal) {
                     VStack(alignment: .leading, spacing: 0) {
                         HStack(alignment: .top, spacing: 0) {
@@ -53,6 +68,12 @@ struct ConsoleMixer: View {
                         Cables(compact: docked, console: true)
                     }
                     .padding(.horizontal, 10).padding(.top, docked ? 6 : 10).padding(.bottom, 2)
+                }
+                .glassScrollers()
+                // The strips share out the width, so the console runs from one side to the other without being resized by hand.
+                .onChange(of: [geo.size.width, CGFloat(p.tracks.count + buses.count), buses.isEmpty ? 0 : 1], initial: true) { _, v in
+                    ConsoleMetrics.Size.shared.fit(width: v[0], strips: Int(v[1]), buses: v[2] > 0)
+                }
                 }
             }
             if !docked {
@@ -115,11 +136,11 @@ private struct ConsoleShell<Content: View>: View {
                         let size = ConsoleMetrics.Size.shared
                         if start == nil { start = size.strip }
                         let next = min(ConsoleMetrics.maxStrip, max(ConsoleMetrics.minStrip, ((start ?? size.strip) + Double(g.translation.width)).rounded()))
-                        if next != size.strip { size.strip = next }
+                        if next != size.chosen { size.chosen = next }
                     }
                     .onEnded { _ in start = nil })
-                .simultaneousGesture(TapGesture(count: 2).onEnded { ConsoleMetrics.Size.shared.strip = 64 })
-                .hint("Drag to make the mixer's strips wider or narrower. Double-click for the standard width.")
+                .simultaneousGesture(TapGesture(count: 2).onEnded { ConsoleMetrics.Size.shared.chosen = nil })
+                .hint("Drag to make the mixer's strips wider or narrower. Double-click to have them fill the width again.")
                 .offset(x: 3)
         }
         .accessibilityElement(children: .contain)
