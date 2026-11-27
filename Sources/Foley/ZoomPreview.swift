@@ -13,13 +13,11 @@ struct ZoomPreview: View {
 
     var body: some View {
         if live.active {
-            let pps = live.pps, x0 = live.x, scrollY = scroll.y
+            let pps = live.pps, x0 = live.x, scrollY = live.vertical ? live.y : scroll.y
             Canvas { ctx, size in
                 draw(&ctx, size, pps: pps, x0: x0, scrollY: scrollY)
             }
-            // With a picture behind the window the timeline already has its tint; a second one here would turn the lanes
-            // solid for as long as the pinch lasts.
-            .background(Theme.Look.shared.glass ? Color.clear : Theme.panel)
+            // No fill of its own: the lanes' own background is still there underneath, so nothing changes tone.
             .allowsHitTesting(false)
         }
     }
@@ -35,6 +33,24 @@ struct ZoomPreview: View {
         // Lanes, under the pinned strip.
         var lanes = ctx
         lanes.clip(to: Path(CGRect(x: 0, y: pinned, width: size.width, height: size.height - pinned)))
+        // The time grid goes down first, behind the tracks and their clips, as it is on the real timeline. Drawn
+        // over them it lightened every clip and lane for as long as the pinch lasted.
+        if store.showTimeGrid {
+            var step = store.gridStep
+            var every = 1
+            while step * Double(every) * pps < 7 { every *= every == 1 ? 2 : (every == 2 ? 5 : 2); if every > 100000 { break } }
+            step *= Double(every)
+            let major = max(1, Int((1 / step).rounded()))
+            var i = max(0, Int((Double(x0) / pps / step).rounded(.down)))
+            while Double(i) * step <= p.reach + 0.0001 {
+                let gx = x(Double(i) * step)
+                if gx > size.width { break }
+                lanes.fill(Path(CGRect(x: gx, y: pinned, width: 1, height: size.height - pinned)),
+                           with: .color(GridLayer.color.opacity(step >= 1 || i % major == 0 ? 0.22 : 0.09)))
+                i += 1
+            }
+        }
+
         var y = pinned - scrollY
         var rows: [(top: CGFloat, height: CGFloat)] = []
         for row in p.rows {
@@ -56,7 +72,7 @@ struct ZoomPreview: View {
                 rows.append((y, h))
                 y += h
             case .track(let track):
-                let h = store.rowHeight(track)
+                let h = live.height(track, store)
                 if y + h > pinned && y < size.height { drawTrack(&lanes, track, top: y, height: h, right: right, size: size, pps: pps, x: x) }
                 rows.append((y, h))
                 y += h
@@ -70,24 +86,7 @@ struct ZoomPreview: View {
         lanes.fill(Path(CGRect(x: 0, y: y, width: right, height: Metrics.master)), with: .color(.white.opacity(0.045)))
         lanes.fill(Path(CGRect(x: 0, y: y + Metrics.master - 1, width: right, height: 1)), with: .color(line))
 
-        if store.showTimeGrid {
-            var step = store.gridStep
-            var every = 1
-            while step * Double(every) * pps < 7 { every *= every == 1 ? 2 : (every == 2 ? 5 : 2); if every > 100000 { break } }
-            step *= Double(every)
-            let major = max(1, Int((1 / step).rounded()))
-            var i = max(0, Int((Double(x0) / pps / step).rounded(.down)))
-            while Double(i) * step <= p.reach + 0.0001 {
-                let gx = x(Double(i) * step)
-                if gx > size.width { break }
-                lanes.fill(Path(CGRect(x: gx, y: pinned, width: 1, height: size.height - pinned)),
-                           with: .color(GridLayer.color.opacity(step >= 1 || i % major == 0 ? 0.22 : 0.09)))
-                i += 1
-            }
-        }
-
         // Pinned strip: ruler, filmstrip, scenes.
-        ctx.fill(Path(CGRect(x: 0, y: 0, width: size.width, height: pinned)), with: .color(Theme.Look.shared.glass ? Theme.current.panel.opacity(0.62) : Theme.panel))
         drawRuler(&ctx, p, size: size, pps: pps, x0: x0)
         drawFilm(&ctx, p, top: Metrics.ruler, size: size, pps: pps, x: x)
         drawScenes(&ctx, p, top: Metrics.ruler + Metrics.film, right: right, size: size, pps: pps, x: x)
@@ -124,12 +123,14 @@ struct ZoomPreview: View {
             ctx.fill(shape, with: .color(color.opacity(empty ? (selected ? 0.2 : 0.08) : (selected ? 0.4 : 0.24))))
             var inside = ctx
             inside.clip(to: shape)
+            if WaveCanvas.colourMode != 0, !empty {
+                inside.fill(Path(CGRect(x: cx, y: top + 4 + 14, width: w, height: h - 14)), with: .color(.black.opacity(0.62)))
+            }
             // Waveform, only the part on screen.
             let from = max(0, -cx), to = min(w, size.width - cx)
             if let take = clip.take, to > from {
-                let wave = WaveCanvas.path(clip: clip, url: store.url(for: take), pps: pps, from: from, width: to - from, height: h - 18)
                 inside.translateBy(x: cx + from, y: top + 4 + 15)
-                inside.fill(wave, with: .color(color.opacity(0.95)))
+                WaveCanvas.draw(&inside, clip: clip, url: store.url(for: take), pps: pps, from: from, width: to - from, height: h - 18, color: color)
                 inside.translateBy(x: -(cx + from), y: -(top + 4 + 15))
             }
             // Fades.
@@ -159,6 +160,27 @@ struct ZoomPreview: View {
                        with: .color(selected ? Color.white.opacity(0.9) : color.opacity(empty ? 0.9 : 0.55)),
                        style: StrokeStyle(lineWidth: selected ? 1.5 : 0.75, dash: empty ? [4, 3] : []))
         }
+        // Crossfades: the darkened overlap with both curves, as on the real timeline.
+        for fade in track.crossfades() {
+            let fx = x(fade.start), w = max(1, CGFloat(fade.length * pps)), h = height - 8
+            guard fx + w > 0 && fx < size.width else { continue }
+            let rect = CGRect(x: fx, y: top + 4, width: w, height: h)
+            let shape = Path(roundedRect: rect, cornerRadius: 4, style: .continuous)
+            ctx.fill(shape, with: .color(.black.opacity(0.45)))
+            var inside = ctx
+            inside.clip(to: shape)
+            inside.translateBy(x: fx, y: top + 4)
+            let a = fade.a, b = fade.b
+            let aFade = CGFloat(a.fadeOut * pps), bFade = CGFloat(b.fadeIn * pps), aEnd = CGFloat((a.end - fade.start) * pps)
+            let out = FadeCurves.curve(from: 0, to: w, height: h) { px in
+                let left = aEnd - px
+                return aFade > 0 && left < aFade ? a.outShape.gain(Float(left / aFade)) : 1
+            }
+            let into = FadeCurves.curve(from: 0, to: w, height: h) { px in bFade > 0 && px < bFade ? b.inShape.gain(Float(px / bFade)) : 1 }
+            inside.stroke(out, with: .color(.white.opacity(0.9)), lineWidth: 1.25)
+            inside.stroke(into, with: .color(.white.opacity(0.9)), lineWidth: 1.25)
+            ctx.stroke(Path(roundedRect: rect.insetBy(dx: 0.375, dy: 0.375), cornerRadius: 4, style: .continuous), with: .color(.white.opacity(0.5)), lineWidth: 0.75)
+        }
         ctx.fill(Path(CGRect(x: 0, y: top + height - 1, width: right, height: 1)), with: .color(Theme.line))
     }
 
@@ -166,24 +188,45 @@ struct ZoomPreview: View {
                                 size: CGSize, pps: Double, x0: CGFloat) {
         let pad: CGFloat = 8, h = Metrics.lane, color = track.kind.color
         func y(_ v: Double) -> CGFloat { top + pad + CGFloat(1 - param.unit(v)) * (h - 2 * pad) }
-        ctx.fill(Path(CGRect(x: 0, y: top, width: right, height: h)), with: .color(.black.opacity(0.18)))
+        // The same as the real lane: a light shade, a faint wash under the line, one fine line, small points.
+        ctx.fill(Path(CGRect(x: 0, y: top, width: right, height: h)), with: .color(.black.opacity(0.1)))
         let keys = track.keys(param)
-        if !keys.isEmpty {
+        if keys.isEmpty {
+            let rest: Double = switch param {
+            case .volume: 0
+            case .highCut: track.highCut
+            case .lowCut: track.lowCut
+            case .send: track.send
+            case .x: track.spatial ? track.position.x : track.pan
+            case .y: track.position.y
+            case .z: track.position.z
+            }
+            var path = Path()
+            path.move(to: CGPoint(x: 0, y: y(rest)))
+            path.addLine(to: CGPoint(x: right, y: y(rest)))
+            ctx.stroke(path, with: .color(color.opacity(0.4)), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+        } else {
             var path = Path()
             var sx: CGFloat = 0
-            path.move(to: CGPoint(x: 0, y: y(interpolate(keys, at: Double(x0) / pps, log: param.isLog) ?? keys[0].value)))
+            let first = CGPoint(x: 0, y: y(interpolate(keys, at: Double(x0) / pps, log: param.isLog) ?? keys[0].value))
+            path.move(to: first)
+            var last = first
             while sx <= right {
                 let v = interpolate(keys, at: Double(sx + x0) / pps, log: param.isLog) ?? keys[0].value
-                path.addLine(to: CGPoint(x: sx, y: y(v)))
+                last = CGPoint(x: sx, y: y(v))
+                path.addLine(to: last)
                 sx += 1.5
             }
-            ctx.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 1.5, lineJoin: .round))
+            var under = path
+            under.addLine(to: CGPoint(x: last.x, y: top + h))
+            under.addLine(to: CGPoint(x: first.x, y: top + h))
+            under.closeSubpath()
+            ctx.fill(under, with: .color(color.opacity(0.07)))
+            ctx.stroke(path, with: .color(color.opacity(0.95)), style: StrokeStyle(lineWidth: 1, lineJoin: .round))
             for k in keys {
                 let kx = CGFloat(k.time * pps) - x0
                 guard kx > -8 && kx < size.width + 8 else { continue }
-                let dot = Path(ellipseIn: CGRect(x: kx - 5, y: y(k.value) - 5, width: 10, height: 10))
-                ctx.fill(dot, with: .color(color))
-                ctx.stroke(dot, with: .color(.white.opacity(0.9)), lineWidth: 1)
+                ctx.fill(Path(ellipseIn: CGRect(x: kx - 3.5, y: y(k.value) - 3.5, width: 7, height: 7)), with: .color(color))
             }
         }
         ctx.fill(Path(CGRect(x: 0, y: top + h - 1, width: right, height: 1)), with: .color(Theme.line))
@@ -271,5 +314,13 @@ struct ZoomPreview: View {
             }
             if selected { ctx.stroke(Path(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 5, style: .continuous), with: .color(.white.opacity(0.85)), lineWidth: 1) }
         }
+    }
+}
+
+
+extension ZoomLive {
+    /// A track's height in the drawing: the height it is being zoomed to, or the one it has.
+    @MainActor func height(_ t: Track, _ store: Store) -> CGFloat {
+        vertical ? min(320, max(46, CGFloat(t.height ?? Double(Metrics.track)) * CGFloat(target))) : store.rowHeight(t)
     }
 }

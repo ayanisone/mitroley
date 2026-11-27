@@ -589,7 +589,7 @@ final class Commands {
         case "debug_scroll":
             // Not listed as a tool: zooms in, scrolls the timeline sideways for a few seconds and reports how often the main thread got a turn.
             if let to = a.num("to"), let sv = Self.timelineScrollView() {
-                sv.contentView.scroll(to: NSPoint(x: to, y: sv.contentView.bounds.origin.y))
+                sv.contentView.scroll(to: NSPoint(x: to, y: a.num("y").map { CGFloat($0) } ?? sv.contentView.bounds.origin.y))
                 sv.reflectScrolledClipView(sv.contentView)
                 return CommandResult(json: ["x": Double(sv.contentView.bounds.origin.x), "content_width": Double(sv.documentView?.frame.width ?? 0)])
             }
@@ -620,16 +620,44 @@ final class Commands {
             let start = CACurrentMediaTime()
             var last = start, worst = 0.0, steps = 0
             let base = Double(1200) / max(1, store.project.duration) * store.zoom
+            if let to = a.num("pinch") {
+                // The real path: the same calls the trackpad makes, ramping to `to`, held, then let go.
+                let at = CGPoint(x: a.num("x") ?? 700, y: a.num("at") ?? 300), up = a.flag("vertical") == true
+                let n = 40
+                for i in 0...n {
+                    store.debugPinch?(CGFloat(exp(log(to) * Double(i) / Double(n))), at, up, false)
+                    try await Task.sleep(nanoseconds: 12_000_000)
+                }
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                store.debugPinch?(CGFloat(to), at, up, true)
+                return CommandResult(json: ["ok": true, "vzoom": store.vzoom, "zoom": store.zoom])
+            }
+            let tall = a.flag("vertical") == true
+            if tall {
+                // Track height: drives the same one-pass drawing the two-hand gesture does.
+                store.zoomLive.pps = base
+                store.zoomLive.x = 0
+                store.zoomLive.y = 0
+                store.zoomLive.target = store.vzoom
+                store.zoomLive.vertical = true
+            }
             store.zoomLive.active = true
             while CACurrentMediaTime() - start < seconds {
                 let u = (CACurrentMediaTime() - start) / seconds
+                if tall {
+                    // Given a fixed height factor and offset, holds them still, so the drawing can be looked at.
+                    store.zoomLive.target = a.num("rows") ?? 0.75 + 2.25 * (0.5 - 0.5 * cos(u * 2 * .pi))
+                    store.zoomLive.y = CGFloat(a.num("y") ?? 40 * (0.5 - 0.5 * cos(u * 2 * .pi)))
+                } else {
                 store.zoomLive.pps = base * (1 + 5 * (0.5 - 0.5 * cos(u * 2 * .pi)))
                 store.zoomLive.x = CGFloat(20 * store.zoomLive.pps) - 300
+                }
                 try await Task.sleep(nanoseconds: 4_000_000)
                 let now = CACurrentMediaTime()
                 worst = max(worst, now - last); last = now; steps += 1
             }
             store.zoomLive.active = false
+            store.zoomLive.vertical = false
             return CommandResult(json: ["steps": steps, "per_second": Double(steps) / seconds, "worst_ms": worst * 1000])
         case "focus":
             if let id = UUID(uuidString: a.str("clip") ?? ""), let l = store.project.locate(clip: id) {

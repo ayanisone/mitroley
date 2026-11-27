@@ -39,6 +39,7 @@ enum ConsoleMetrics {
 struct ConsoleMixer: View {
     @Environment(Store.self) private var store
     var docked = false
+    @AppStorage("showCables") private var cables = true
 
     var body: some View {
         let p = store.project
@@ -65,7 +66,7 @@ struct ConsoleMixer: View {
                             ConsoleMaster()
                         }
                         .frame(maxHeight: .infinity)
-                        Cables(compact: docked, console: true)
+                        if cables { Cables(compact: docked, console: true) }
                     }
                     .padding(.horizontal, 10).padding(.top, docked ? 6 : 10).padding(.bottom, 2)
                 }
@@ -80,6 +81,7 @@ struct ConsoleMixer: View {
                 Rectangle().fill(Theme.line).frame(height: 1)
                 HStack {
                     Text("\(p.tracks.count) track\(p.tracks.count == 1 ? "" : "s")\(buses.isEmpty ? "" : ", \(buses.count) bus\(buses.count == 1 ? "" : "es")")").font(.system(size: 11.5)).foregroundStyle(Theme.secondary).lineLimit(1).fixedSize()
+                    CablesSwitch()
                     Spacer()
                     Text("Drag a knob or fader up and down · Shift for fine · drag the line between strips to resize them").font(.system(size: 11.5)).foregroundStyle(Theme.tertiary).lineLimit(1).truncationMode(.tail)
                 }
@@ -101,25 +103,61 @@ private struct ConsoleShell<Content: View>: View {
     var extra: CGFloat = 0
     var selected = false
     var dim = false
+    /// A small mark in the number's place, for strips that have no number.
+    var symbol: String?
+    /// Given a new name when the plate is double-clicked and typed into. nil: this strip cannot be renamed.
+    var rename: ((String) -> Void)?
     @ViewBuilder let content: Content
     @State private var start: Double?
+    @State private var editing = false
+    @State private var draft = ""
+    @FocusState private var typing: Bool
+
+    private func commit() {
+        let t = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        editing = false
+        if !t.isEmpty, t != name { rename?(t) }
+    }
 
     var body: some View {
         let width = ConsoleMetrics.strip + extra
         VStack(spacing: 5) {
             VStack(spacing: 0) {
                 Rectangle().fill(color.opacity(dim ? 0.35 : 0.85)).frame(height: 2)
-                // The name sits in the middle of its strip, the same on a track, a bus and the master. The track's number is
-                // tucked into the left corner instead of sitting beside the name, where it pushed the name off centre.
-                Text(name).font(.system(size: 10.5, weight: .semibold)).lineLimit(1).truncationMode(.tail)
-                    .padding(.horizontal, number.isEmpty ? 5 : 13)
-                    .frame(height: 20).frame(maxWidth: .infinity)
-                    .overlay(alignment: .leading) {
-                        if !number.isEmpty {
-                            Text(number).font(.system(size: 8.5, weight: .medium).monospacedDigit()).foregroundStyle(Theme.tertiary)
-                                .padding(.leading, 5)
-                        }
+                // 26 pt tall, so the name sits in the middle of its plate with clear space under the colour line.
+                // The name itself is centred in the plate, to the pixel. Its number (a small mark on a bus or the master)
+                // hangs off the name's left edge at a fixed 4 pt, so the gap is the same on every strip and the number
+                // never pulls the name off centre. The side padding keeps room for it beside a long name.
+                Group {
+                    if editing {
+                        TextField("", text: $draft)
+                            .textFieldStyle(.plain).font(.system(size: 10.5, weight: .semibold)).multilineTextAlignment(.center)
+                            .focused($typing)
+                            .onSubmit { commit() }
+                            .onExitCommand { editing = false }
+                            .onChange(of: typing) { _, on in if !on, editing { commit() } }
+                    } else {
+                        Text(name).font(.system(size: 10.5, weight: .semibold)).lineLimit(1).truncationMode(.tail)
+                            .overlay(alignment: .leading) {
+                                Group {
+                                    if let symbol { Image(systemName: symbol).font(.system(size: 8, weight: .semibold)) }
+                                    else { Text(number).font(.system(size: 9, weight: .medium).monospacedDigit()) }
+                                }
+                                .foregroundStyle(Theme.tertiary)
+                                .fixedSize()
+                                .alignmentGuide(.leading) { $0.width + 4 }
+                            }
                     }
+                }
+                .padding(.horizontal, 15)
+                .frame(height: 26).frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
+                .simultaneousGesture(TapGesture(count: 2).onEnded {
+                    guard rename != nil else { return }
+                    draft = name; editing = true
+                    DispatchQueue.main.async { typing = true }
+                })
+                .hint(rename == nil ? name : "\(name). Double-click to rename.")
             }
             .background(selected ? color.opacity(0.22) : Color.black.opacity(0.2))
             content
@@ -419,6 +457,11 @@ private struct ConsoleTrack: View {
     @State private var showDuck = false
     @State private var showRoom = false
 
+    private func rename(_ name: String) { edit { $0.name = name } }
+    private func sends(to g: TrackGroup) -> Binding<Bool> {
+        let id = track.id, here = track.groupID == g.id
+        return Binding<Bool>(get: { here }, set: { on in if on { store.setGroup(g.name, for: [id]) } })
+    }
     private func edit(_ change: @escaping (inout Track) -> Void) {
         store.mutate { p in if let i = p.trackIndex(track.id) { change(&p.tracks[i]) } }
     }
@@ -430,7 +473,7 @@ private struct ConsoleTrack: View {
         let automated = AutoParam.allCases.filter { !track.keys($0).isEmpty }
         let pan = track.spatial ? track.position.x : track.pan
         ConsoleShell(color: track.kind.color, name: track.name, number: "\(number)", selected: store.selection == .track(track.id),
-                     dim: track.mute || bus?.mute == true) {
+                     dim: track.mute || bus?.mute == true, rename: rename) {
             VStack(spacing: 1) {
                 Knob(value: pan, range: -1...1, tint: track.kind.color, reset: 0, bipolar: true, label: Slide.side, begin: { store.beginGesture() }) { v in
                     let x = abs(v) < 0.04 ? 0 : v
@@ -504,7 +547,7 @@ private struct ConsoleTrack: View {
                     if !(p.groups ?? []).isEmpty {
                         Section("Buses") {
                             ForEach(p.groups ?? []) { g in
-                                Toggle(g.name, isOn: Binding(get: { bus?.id == g.id }, set: { if $0 { store.setGroup(g.name, for: [track.id]) } }))
+                                Toggle(g.name, isOn: sends(to: g))
                             }
                         }
                     }
@@ -540,7 +583,8 @@ private struct ConsoleBus: View {
         let members = store.project.tracks.filter { $0.groupID == group.id }
         let level = members.map { store.player.trackLevels[$0.id] ?? 0 }.max() ?? 0
         let sound = group.plugins?.first { $0.preset != nil }?.preset
-        ConsoleShell(color: Color(white: 0.78), name: group.name, number: "", selected: store.selection == .group(group.id), dim: group.mute) {
+        ConsoleShell(color: Color(white: 0.78), name: group.name, number: "", selected: store.selection == .group(group.id), dim: group.mute,
+                     symbol: "arrow.triangle.merge", rename: { name in store.editGroup(group.id) { $0.name = name } }) {
             VStack(spacing: 1) {
                 Image(systemName: "arrow.triangle.merge").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.secondary).frame(height: 26)
                 Text("\(members.count) track\(members.count == 1 ? "" : "s")").font(.system(size: 8.5)).foregroundStyle(Theme.tertiary).frame(height: 11)
@@ -590,7 +634,7 @@ private struct ConsoleMaster: View {
     @Environment(Store.self) private var store
     var body: some View {
         let v = store.project.masterVolume ?? 0
-        ConsoleShell(color: Color.white.opacity(0.9), name: "MASTER", number: "", extra: 20) {
+        ConsoleShell(color: Color.white.opacity(0.9), name: "MASTER", number: "", extra: 20, symbol: "sum") {
             // Empty where a track has its knob and keys, so every fader starts at the same height.
             Color.clear.frame(height: 38)
             Color.clear.frame(height: 37)

@@ -1,12 +1,15 @@
 import SwiftUI
+import simd
 import AppKit
 
 struct TimelineView: View {
     @Environment(Store.self) private var store
     @State private var scroll = TimelineScroll()
-    @State private var pinch: (zoom: Double, vzoom: Double, time: Double, x: CGFloat, vertical: Bool, base: CGFloat)?
+    @State private var pinch: (zoom: Double, vzoom: Double, time: Double, x: CGFloat, vertical: Bool, base: CGFloat, y: CGFloat, scrollY: CGFloat)?
     private var live: ZoomLive { store.zoomLive }
     @State private var settle: Task<Void, Never>?
+    /// Counts gestures, so the tidy-up after one cannot end the next.
+    @State private var era = 0
     @State private var fitWidth: CGFloat = 0
     @State private var refit: Task<Void, Never>?
     @State private var lastHeight = 0.0
@@ -14,11 +17,15 @@ struct TimelineView: View {
     var body: some View {
         GeometryReader { geo in
             let visible = max(300, geo.size.width - Metrics.header - 1)
-            let duration = max(1, store.project.duration)
+            // Fitting means fitting everything: the film, or the last sound when sound runs on past it.
+            let duration = max(1, store.project.extent)
             // The timeline is scaled to the width it last settled at, not the width of this instant: while the window or
             // the side panel is being resized it keeps its scale, and is fitted once when the resizing stops.
             let fit = fitWidth > 0 ? fitWidth : visible
-            let pps = Double(fit - 24) / duration * store.zoom
+            // Up to four points for every sample of sound, but never a timeline more than three million points wide:
+            // wider than that the lanes cost hundreds of megabytes and can stop drawing at all.
+            let _ = { store.zoomCap = max(40, min(192_000, 3_000_000 / max(1, store.project.reach)) / max(0.001, Double(fit - 24) / duration)) }()
+            let pps = Double(fit - 24) / duration * min(store.zoom, store.zoomCap)
             let _ = { Project.viewFloor = Double(fit) / pps }()
             let contentWidth = CGFloat(store.project.reach * pps) + 24
             let pinned = Metrics.ruler + Metrics.film + Metrics.scene
@@ -60,10 +67,12 @@ struct TimelineView: View {
 
     /// A pinch reported by the scroll view. Laying out every clip on every tick of a pinch is too slow, so the pinch
     /// drives a one-pass drawing of the timeline (ZoomPreview), and the real timeline is laid out once when it pauses or ends.
-    private func pinched(total: CGFloat, at location: CGFloat, option: Bool, ended: Bool, pps: Double, visible: CGFloat, duration: Double) {
+    private func pinched(total: CGFloat, at point: CGPoint, option: Bool, ended: Bool, pps: Double, visible: CGFloat, duration: Double) {
         if pinch == nil {
-            let x = max(0, location - Metrics.header - 1)
-            pinch = (store.zoom, store.vzoom, Double(scroll.x + x) / pps, x, option, 1)
+            era += 1
+            let x = max(0, point.x - Metrics.header - 1)
+            let y = max(0, point.y - (Metrics.ruler + Metrics.film + Metrics.scene))
+            pinch = (store.zoom, store.vzoom, Double(scroll.x + x) / pps, x, option, 1, y, max(0, scroll.y))
         }
         guard let start = pinch else { return }
         if ended {
@@ -73,17 +82,29 @@ struct TimelineView: View {
             return
         }
         let m = Double(total / start.base)
+        // A pinch that has collapsed to nothing gives no usable ratio (0 over 0). Skipped, never passed on as a zoom.
+        guard m.isFinite, m > 0 else { return }
         if start.vertical {
-            // Track height: laid out for real, a few times a second.
-            let now = CACurrentMediaTime()
-            live.target = min(3, max(0.75, start.vzoom * m))
-            if now - lastHeight > 0.1 {
-                lastHeight = now
-                store.vzoom = live.target
-            }
+            // Track height. Drawn in one pass on every step, the same as a pinch in time, and laid out for real once
+            // when the fingers pause or lift: laying every lane out on every step is what made this slow and jumpy.
+            let target = min(3, max(0.75, start.vzoom * m))
+            live.target = target
+            // Keep the row under the pointer under the pointer.
+            // Only track rows change height (bus rows and automation lanes do not, and tracks stop at a least and a most), so
+            // the place is worked out row by row: the same row, the same share of the way down it, before and after.
+            live.y = max(0, rowOffset(start.scrollY + start.y, from: start.vzoom, to: target) - start.y)
+            live.pps = pps
+            live.x = scroll.x
+            live.rows = target
+            live.vertical = true
+            live.active = true
+            // Nothing is laid out until the fingers lift: a pause with the fingers down used to lay the whole timeline
+            // out, and the hitch from that made the movement come in steps.
+            settle?.cancel()
             return
         }
-        let zoom = min(40, max(1, start.zoom * m))
+        let zoom = min(store.zoomCap, max(1, start.zoom * m))
+        live.vertical = false
         live.target = zoom
         live.pps = Double(visible - 24) / duration * zoom
         // Keep the moment under the pointer under the pointer.
@@ -95,21 +116,56 @@ struct TimelineView: View {
             guard !Task.isCancelled, let now = pinch else { return }
             commitZoom()
             // Carry on from the new zoom if the fingers are still down.
-            pinch = (store.zoom, store.vzoom, now.time, now.x, now.vertical, total)
+            pinch = (store.zoom, store.vzoom, now.time, now.x, now.vertical, total, now.y, max(0, scroll.y))
         }
+    }
+
+    /// Where a point `y` down the lanes at one track-height factor ends up at another.
+    private func rowOffset(_ y: CGFloat, from: Double, to: Double) -> CGFloat {
+        func height(_ t: Track, _ z: Double) -> CGFloat { min(320, max(46, CGFloat(t.height ?? Double(Metrics.track)) * CGFloat(z))) }
+        var before: CGFloat = 0, after: CGFloat = 0
+        func pass(_ a: CGFloat, _ b: CGFloat) -> CGFloat? {
+            if y < before + a { return after + (y - before) / max(1, a) * b }
+            before += a; after += b
+            return nil
+        }
+        for row in store.project.rows {
+            switch row {
+            case .group:
+                if let r = pass(Metrics.group, Metrics.group) { return r }
+            case .track(let t):
+                if let r = pass(height(t, from), height(t, to)) { return r }
+                if t.lane != nil, let r = pass(Metrics.lane, Metrics.lane) { return r }
+            }
+        }
+        return after + (y - before)
     }
 
     /// Lays the real timeline out at the zoom the pinch has reached, scrolled to where the drawing was.
     private func commitZoom() {
         guard let start = pinch else { return }
         if start.vertical {
-            if live.target > 0 { store.vzoom = live.target }
+            if live.target > 0, live.active {
+                store.vzoom = live.target
+                store.scrollTimeline?(CGPoint(x: scroll.x, y: live.y))
+                let mine = era
+                Task {
+                    try? await Task.sleep(nanoseconds: 90_000_000)
+                    // A gesture begun since then owns the drawing now; ending it from here left the names and the
+                    // lanes at different heights.
+                    guard mine == era, pinch == nil else { return }
+                    live.active = false
+                    live.vertical = false
+                }
+            }
         } else if live.active {
             store.zoom = live.target
             store.scrollTimeline?(CGPoint(x: live.x, y: max(0, scroll.y)))
             // The drawing stays up for a moment so the real timeline never shows half laid out.
+            let mine = era
             Task {
                 try? await Task.sleep(nanoseconds: 80_000_000)
+                guard mine == era, pinch == nil else { return }
                 live.active = false
             }
         }
@@ -269,6 +325,7 @@ struct TrackHeaders: View {
 
 struct TrackHeader: View {
     @Environment(Store.self) private var store
+    @Environment(ZoomLive.self) private var live
     let track: Track
     var moving = false
     /// Called with the pointer's height in the header column while the track is dragged, and once when it is let go.
@@ -282,12 +339,8 @@ struct TrackHeader: View {
     var body: some View {
         let selected = store.selection == .track(track.id)
         HStack(spacing: 9) {
-            // The track's colour as a light that falls off down the bar, with a soft glow, instead of one flat stripe.
-            Capsule()
-                .fill(LinearGradient(colors: [track.kind.color, track.kind.color.opacity(0.22)], startPoint: .top, endPoint: .bottom))
-                .frame(width: 3, height: 40)
-                .shadow(color: track.kind.color.opacity(0.45), radius: 4, x: 0, y: -2)
-                .padding(.leading, track.groupID == nil ? 0 : 9)
+            // No colour bar and no indent: the icon and the volume slider already carry the track's colour, and every
+            // track name starts at the same place whether or not the track plays into a bus.
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
                     Image(systemName: track.kind.symbol)
@@ -339,11 +392,17 @@ struct TrackHeader: View {
         }
         .padding(.leading, 8)
         .padding(.trailing, 10)
-        .frame(height: store.rowHeight(track))
+        .frame(height: live.active && live.vertical ? min(320, max(46, CGFloat(track.height ?? Double(Metrics.track)) * CGFloat(live.rows))) : store.rowHeight(track))
         .background(selected ? Theme.raised : Color.clear)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
         .contentShape(Rectangle())
-        .onTapGesture { store.selection = .track(track.id) }
+        // Selected on the press itself, not when the button comes up and not after waiting to see whether a second
+        // click follows (the name's double-click to rename made a plain click wait for that).
+        .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in
+            if store.selection != .track(track.id) { store.selection = .track(track.id) }
+            // Clicking a track asks to see it: the panel on the right comes back if it was put away.
+            if store.sideHidden { store.sideHidden = false }
+        })
         // Drag the header up or down to move the track. It starts only after 4 pt of vertical travel,
         // so clicks, renaming and the volume slider keep working.
         .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .named("trackHeaders"))
@@ -1006,6 +1065,14 @@ struct ClipView: View {
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(color.opacity(clip.takes.isEmpty ? (selected ? 0.2 : 0.08) : (selected ? 0.4 : 0.24)))
+            // With coloured waveforms the body under the title is dark, as in FL Studio, so the colours read bright and
+            // the grid does not show through the sound.
+            if WaveCanvas.colourMode != 0, !clip.takes.isEmpty {
+                UnevenRoundedRectangle(bottomLeadingRadius: 6, bottomTrailingRadius: 6, style: .continuous)
+                    .fill(Color.black.opacity(0.62))
+                    .padding(.top, 14)
+                    .allowsHitTesting(false)
+            }
             WaveformView(clip: clip, url: clip.take.map { store.url(for: $0) }, color: color, pps: pps)
                 .padding(.top, 15)
                 .padding(.bottom, 3)
@@ -1083,6 +1150,7 @@ struct ClipView: View {
             Button(clip.muted == true ? "Unmute Clip" : "Mute Clip") { store.toggleClipMute(clip.id) }
             Button("Download Sound…") { store.downloadClipAsking(clip.id) }.disabled(clip.take == nil)
             Button("Split into Stems…") { Panels.clipStems(store, clip.id) }.disabled(clip.take == nil)
+            Button("Isolate the Voice…") { Panels.clipVoice(store, clip.id) }.disabled(clip.take == nil)
             Button("Crossfade with Neighbour") { store.crossfade(clip.id) }
                 .disabled(track.crossfadePartner(of: clip.id) == nil)
             Menu("Fade In") {
@@ -1368,60 +1436,230 @@ struct WaveCanvas: View, Equatable {
     let pps: Double
     /// Where this canvas starts inside the clip, in points.
     let from: CGFloat
+    /// The waveform detail in force when this was made, so a change of it redraws the waveform.
+    var detail = AudioCache.peaksPerSecond
+    var mode = WaveCanvas.colourMode
 
     static func == (a: WaveCanvas, b: WaveCanvas) -> Bool {
         let x = a.clip, y = b.clip
-        return a.url == b.url && a.pps == b.pps && a.from == b.from && a.color == b.color
+        return a.url == b.url && a.pps == b.pps && a.from == b.from && a.color == b.color && a.detail == b.detail && a.mode == b.mode
             && x.offset == y.offset && x.speed == y.speed && x.loop == y.loop && x.gain == y.gain && x.duration == y.duration
             && x.fadeIn == y.fadeIn && x.fadeOut == y.fadeOut && x.inShape == y.inShape && x.outShape == y.outShape
     }
 
     var body: some View {
         Canvas { ctx, size in
-            ctx.fill(Self.path(clip: clip, url: url, pps: pps, from: from, width: size.width, height: size.height), with: .color(color.opacity(0.95)))
+            var c = ctx
+            Self.draw(&c, clip: clip, url: url, pps: pps, from: from, width: size.width, height: size.height, color: color)
         }
         .allowsHitTesting(false)
     }
 
-    /// The waveform's outline for `width` points of a clip starting `from` points in, in a box `height` tall.
-    static func path(clip: Clip, url: URL?, pps: Double, from: CGFloat, width: CGFloat, height: CGFloat) -> Path {
-        guard let url else { return Path() }
-        let peaks = AudioCache.shared.peaks(url)
-        guard peaks.count > 1 else { return Path() }
+    /// How waveforms are coloured: 0 the track's colour; 1 a colour map, pale, leaning teal where the sound is low and
+    /// peach where it is bright; 2 multiband, the same reading in strong colour, blue for lows through green to amber.
+    static var colourMode: Int { UserDefaults.standard.integer(forKey: "waveColour") }
+    // Bright and clean, in FL Studio's order: warm orange where the sound is low and heavy, green through the middle,
+    // teal to blue where it is bright.
+    private static let strong: [(Float, SIMD3<Float>)] = [(0, SIMD3(1.00, 0.36, 0.14)), (0.28, SIMD3(0.98, 0.66, 0.16)), (0.52, SIMD3(0.36, 0.88, 0.34)),
+                                                           (0.78, SIMD3(0.14, 0.82, 0.70)), (1, SIMD3(0.30, 0.58, 1.00))]
+    private static let pale: [(Float, SIMD3<Float>)] = [(0, SIMD3(0.40, 0.68, 0.63)), (0.38, SIMD3(0.80, 0.89, 0.70)), (0.6, SIMD3(0.95, 0.94, 0.75)),
+                                                         (1, SIMD3(0.93, 0.72, 0.52))]
+    private static func shade(_ stops: [(Float, SIMD3<Float>)], _ t: Float) -> SIMD3<Float> {
+        for i in 1..<stops.count where t <= stops[i].0 {
+            let f = (t - stops[i - 1].0) / max(0.0001, stops[i].0 - stops[i - 1].0)
+            return stops[i - 1].1 + (stops[i].1 - stops[i - 1].1) * f
+        }
+        return stops[stops.count - 1].1
+    }
+
+    /// The waveform as it really is, one column for every point across: the lowest and highest the sound reaches inside
+    /// that column, with its sign kept, so the shape above the centre line and the shape below it are the sound's own
+    /// and not mirror images. Zoomed out, each column covers many samples and is read from a measured summary. Zoomed
+    /// in, each column is read straight from the samples it covers, so every stage between "the whole clip" and "single
+    /// samples" shows exactly what is there. Past one sample a point, the value glides between neighbouring samples.
+    /// Columns are half a point apart, so on a Retina screen there is one for every pixel.
+    private static let step: CGFloat = 0.5
+
+    private static func columns(clip: Clip, url: URL, pps: Double, from: CGFloat, width: CGFloat) -> (cols: [(lo: Float, hi: Float)], line: Bool, dx: CGFloat)? {
+        guard let buf = AudioCache.shared.buffer(url), let ch = buf.floatChannelData else { return nil }
+        let count = Int(buf.frameLength)
+        guard count > 1 else { return nil }
+        let fs = AudioCache.sampleRate
+        let per = fs * max(0.01, clip.speed) / pps * Double(step)     // samples in one column
+        let coarse = per > 400
+        // One sample or fewer to a column: the wave is a single line, drawn through the sound's own values.
+        // Up to three samples to a column the wave is still a single line, drawn through the sound's own values, with
+        // enough points across that none is skipped. Past that it is a band, one column for every pixel.
+        let line = per <= 3
+        let dx = line ? step / CGFloat(max(1, per.rounded(.up))) : step
+        let summary = coarse ? AudioCache.shared.extremes(url) : []
         let rate = AudioCache.peaksPerSecond
+        if coarse, summary.count < 2 { return nil }
         let gain = Float(dbToLinear(clip.gain))
-        let mid = height / 2
-        let n = Int(width)
-        let span = max(1, Int(rate / pps))
-        var top: [CGPoint] = []
-        top.reserveCapacity(n + 1)
+        let l = ch[0], r = ch[1]
+        var out: [(lo: Float, hi: Float)] = []
+        let n = Int(width / dx)
+        out.reserveCapacity(n + 2)
         var x = 0
-        while x <= n {
-            let rel = Double(from + CGFloat(x)) / pps
-            var idx = Int((clip.offset + rel * clip.speed) * rate)
-            if clip.loop { idx %= peaks.count } else if idx >= peaks.count { break }
-            var m: Float = 0
-            var k = 0
-            while k < span {
-                let j = clip.loop ? (idx + k) % peaks.count : min(peaks.count - 1, idx + k)
-                if peaks[j] > m { m = peaks[j] }
-                k += 1
+        while x <= n + 1 {
+            let rel = Double(from + CGFloat(x) * dx) / pps
+            let t0 = clip.offset + rel * clip.speed, t1 = t0 + clip.speed / pps * Double(dx)
+            var lo: Float = 0, hi: Float = 0
+            if coarse {
+                var b0 = Int(t0 * rate)
+                let b1 = max(b0 + 1, Int(t1 * rate))
+                if !clip.loop, b0 >= summary.count { break }
+                lo = .greatestFiniteMagnitude; hi = -.greatestFiniteMagnitude
+                while b0 < b1 {
+                    let j = clip.loop ? b0 % summary.count : min(summary.count - 1, b0)
+                    lo = min(lo, summary[j].x); hi = max(hi, summary[j].y)
+                    b0 += 1
+                }
+            } else if line {
+                let exact = t0 * fs
+                var i = Int(exact.rounded(.down))
+                if !clip.loop, i >= count - 1 { if i >= count { break }; i = count - 2 }
+                let f = Float(exact - exact.rounded(.down))
+                let a = clip.loop ? ((i % count) + count) % count : max(0, i), b = clip.loop ? (a + 1) % count : min(count - 1, a + 1)
+                let va = (l[a] + r[a]) * 0.5, vb = (l[b] + r[b]) * 0.5
+                lo = va + (vb - va) * f; hi = lo
+            } else {
+                var i = Int(t0 * fs)
+                let end = max(i + 1, Int(t1 * fs))
+                if !clip.loop, i >= count { break }
+                lo = .greatestFiniteMagnitude; hi = -.greatestFiniteMagnitude
+                while i < end {
+                    let j = clip.loop ? ((i % count) + count) % count : min(count - 1, max(0, i))
+                    let v = (l[j] + r[j]) * 0.5
+                    lo = min(lo, v); hi = max(hi, v)
+                    i += 1
+                }
             }
             var env: Float = 1
             if clip.fadeIn > 0, rel < clip.fadeIn { env *= clip.inShape.gain(Float(rel / clip.fadeIn)) }
             let left = clip.duration - rel
             if clip.fadeOut > 0, left < clip.fadeOut { env *= clip.outShape.gain(Float(max(0, left) / clip.fadeOut)) }
-            let a = CGFloat(min(1, sqrt(m * gain * env)))   // sqrt lifts quiet detail into view
-            top.append(CGPoint(x: CGFloat(x), y: mid - max(0.5, a * mid)))
+            // The sound's own level, untouched: a lift for quiet sound squares off every peak and the wave stops
+            // looking like itself.
+            let g = gain * env
+            out.append((max(-1, min(1, lo * g)), max(-1, min(1, hi * g))))
             x += 1
         }
-        guard top.count > 1 else { return Path() }
+        guard out.count > 1 else { return nil }
+        if !line {
+            // Joined up: a column reaches at least to where its neighbour left off, so a fast swing is unbroken.
+            for i in 1..<out.count {
+                if out[i].lo > out[i - 1].hi { out[i].lo = out[i - 1].hi }
+                if out[i].hi < out[i - 1].lo { out[i].hi = out[i - 1].lo }
+            }
+        }
+        return (out, line, dx)
+    }
+
+    /// The line for columns `range`. Zoomed in, it runs through the sound's own values. Zoomed out, it is still one
+    /// line, the way FL Studio draws it: in each column it runs from the lowest the sound reaches to the highest, then
+    /// across to the next column and back down, so a dense stretch reads as fine soft hatching and not as a solid block
+    /// with hard edges. It is always stroked with a smoothed pen.
+    private static func shape(_ cols: [(lo: Float, hi: Float)], _ range: Range<Int>, line: Bool, dx: CGFloat, mid: CGFloat) -> Path {
         var path = Path()
-        path.move(to: top[0])
-        for p in top.dropFirst() { path.addLine(to: p) }
-        for p in top.reversed() { path.addLine(to: CGPoint(x: p.x, y: 2 * mid - p.y)) }
+        func y(_ v: Float) -> CGFloat { mid - CGFloat(v) * (mid - 1) }
+        let last = min(cols.count - 1, range.upperBound)   // reaches to the next point, so neighbours meet
+        guard last > range.lowerBound else { return path }
+        if line {
+            path.move(to: CGPoint(x: CGFloat(range.lowerBound) * dx, y: y(cols[range.lowerBound].hi)))
+            for i in (range.lowerBound + 1)...last { path.addLine(to: CGPoint(x: CGFloat(i) * dx, y: y(cols[i].hi))) }
+            return path
+        }
+        // A solid shape: along the tops, back along the bottoms, one point for every pixel, never thinner than one.
+        func edge(_ i: Int) -> (CGFloat, CGFloat) {
+            var top = y(cols[i].hi), bottom = y(cols[i].lo)
+            if bottom - top < 1 { let m = (top + bottom) / 2; top = m - 0.5; bottom = m + 0.5 }
+            return (top, bottom)
+        }
+        path.move(to: CGPoint(x: CGFloat(range.lowerBound) * dx, y: edge(range.lowerBound).0))
+        for i in (range.lowerBound + 1)...last { path.addLine(to: CGPoint(x: CGFloat(i) * dx, y: edge(i).0)) }
+        for i in stride(from: last, through: range.lowerBound, by: -1) { path.addLine(to: CGPoint(x: CGFloat(i) * dx, y: edge(i).1)) }
         path.closeSubpath()
         return path
+    }
+
+    /// The waveform's outline for `width` points of a clip starting `from` points in, in a box `height` tall.
+    static func path(clip: Clip, url: URL?, pps: Double, from: CGFloat, width: CGFloat, height: CGFloat) -> Path {
+        guard let url, let c = columns(clip: clip, url: url, pps: pps, from: from, width: width) else { return Path() }
+        let p = shape(c.cols, 0..<c.cols.count, line: c.line, dx: c.dx, mid: height / 2)
+        return c.line ? p.strokedPath(StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round)) : p
+    }
+
+    /// Draws the waveform for `width` points of a clip starting `from` points in, in the colouring chosen in Settings.
+    static func draw(_ ctx: inout GraphicsContext, clip: Clip, url: URL?, pps: Double, from: CGFloat, width: CGFloat, height: CGFloat, color: Color) {
+        guard let url, let c = columns(clip: clip, url: url, pps: pps, from: from, width: width) else { return }
+        let mode = colourMode
+        let mid = height / 2
+        let pen = StrokeStyle(lineWidth: c.line ? 1.2 : 1, lineCap: .round, lineJoin: .round)
+        func paint(_ path: Path, _ color: Color) {
+            if c.line { ctx.stroke(path, with: .color(color), style: pen) } else { ctx.fill(path, with: .color(color)) }
+        }
+        if mode == 0 {
+            paint(shape(c.cols, 0..<c.cols.count, line: c.line, dx: c.dx, mid: mid), color.opacity(0.95))
+        } else {
+            // One waveform, drawn once, its colour gliding along its length like FL Studio's: the colour is read every
+            // few points from a long stretch of sound around that place (at least a third of a second, and at least a
+            // hundred points across), and blended smoothly in between. Cut into separately coloured pieces it flickered
+            // between neighbouring shades every few pixels, and that was the speckle.
+            let bands = AudioCache.shared.bands(url)
+            let rate = AudioCache.peaksPerSecond
+            let stops = mode == 2 ? strong : pale
+            let reach = max(0.35, 50 / pps) * clip.speed
+            func tone(at x: CGFloat) -> Float {
+                guard bands.count > 1 else { return 0.5 }
+                let t = clip.offset + Double(from + x) / pps * clip.speed
+                let j0 = Int((t - reach) * rate), j1 = Int((t + reach) * rate)
+                let hop = max(1, (j1 - j0) / 24)
+                var v = SIMD3<Float>(0, 0, 0)
+                var j = j0
+                while j <= j1 {
+                    let k = clip.loop ? ((j % bands.count) + bands.count) % bands.count : min(bands.count - 1, max(0, j))
+                    v += bands[k]
+                    j += hop
+                }
+                // Highs carry far less level than lows for the same loudness to the ear, so they are weighed up; then
+                // the middle of the range is spread out, since most sound lives there.
+                let w = SIMD3<Float>(v.x, v.y * 1.8, v.z * 3.6)
+                return min(1, max(0, ((w.y * 0.5 + w.z) / max(0.000001, w.x + w.y + w.z) - 0.18) / 0.62))
+            }
+            let span = max(1, CGFloat(c.cols.count - 1) * c.dx)
+            let every: CGFloat = 12
+            var raw: [Float] = []
+            var x: CGFloat = 0
+            while x <= span + every { raw.append(tone(at: x)); x += every }
+            // Eased once more between neighbours, so no step between two readings shows.
+            let soft = raw.indices.map { i in (raw[max(0, i - 1)] + raw[i] * 2 + raw[min(raw.count - 1, i + 1)]) / 4 }
+            let gradient = Gradient(stops: soft.enumerated().map { i, v in
+                let t = shade(stops, v)
+                return Gradient.Stop(color: Color(red: Double(t.x), green: Double(t.y), blue: Double(t.z)), location: min(1, CGFloat(i) * every / (span + every)))
+            })
+            let path = shape(c.cols, 0..<c.cols.count, line: c.line, dx: c.dx, mid: mid)
+            let shading = GraphicsContext.Shading.linearGradient(gradient, startPoint: .zero, endPoint: CGPoint(x: span + every, y: 0))
+            if c.line { ctx.stroke(path, with: shading, style: pen) } else { ctx.fill(path, with: shading) }
+        }
+        // Zoomed in until samples stand apart: a dot on each one.
+        let apart = CGFloat(pps / (AudioCache.sampleRate * max(0.01, clip.speed)))
+        if apart >= 3, let buf = AudioCache.shared.buffer(url), let ch = buf.floatChannelData {
+            let fs = AudioCache.sampleRate, count = Int(buf.frameLength)
+            let gain = Float(dbToLinear(clip.gain))
+            var dots = Path()
+            var i = Int(((clip.offset + Double(from) / pps * clip.speed) * fs).rounded(.down))
+            let last = Int(((clip.offset + Double(from + width) / pps * clip.speed) * fs).rounded(.up))
+            while i <= last, count > 0 {
+                defer { i += 1 }
+                let j = clip.loop ? ((i % count) + count) % count : i
+                guard j >= 0, j < count else { continue }
+                let v = max(-1, min(1, (ch[0][j] + ch[1][j]) * 0.5 * gain))
+                let t = (Double(i) / fs - clip.offset) / max(0.01, clip.speed)
+                dots.addEllipse(in: CGRect(x: CGFloat(t * pps) - from - 1.5, y: mid - CGFloat(v) * (mid - 1) - 1.5, width: 3, height: 3))
+            }
+            ctx.fill(dots, with: .color(mode == 0 ? color : Color.white.opacity(0.9)))
+        }
     }
 }
 
@@ -1433,6 +1671,8 @@ struct AutomationLane: View {
     let param: AutoParam
     let pps: Double
     @State private var dragging: UUID?
+    /// The point whose stretch to the next one is being bent.
+    @State private var bending: UUID?
 
     private let pad: CGFloat = 8
     private func y(_ v: Double) -> CGFloat { pad + CGFloat(1 - param.unit(v)) * (Metrics.lane - 2 * pad) }
@@ -1454,7 +1694,7 @@ struct AutomationLane: View {
         let keys = track.keys(param)
         let color = track.kind.color
         ZStack(alignment: .topLeading) {
-            Rectangle().fill(Color.black.opacity(0.18))
+            Rectangle().fill(Color.black.opacity(0.1))
                 .contentShape(Rectangle())
                 .gesture(SpatialTapGesture(count: 2).onEnded { g in
                     let k = Keyframe(time: max(0, Double(g.location.x) / pps), value: value(g.location.y))
@@ -1472,18 +1712,69 @@ struct AutomationLane: View {
                     path.addLine(to: CGPoint(x: size.width, y: y(resting)))
                     ctx.stroke(path, with: .color(color.opacity(0.4)), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
                 } else {
-                    // Sampled from the same function the engine uses, so holds and eased curves draw as they sound.
+                    // Sampled from the same function the engine uses, so holds and bent curves draw as they sound.
                     var x = max(0, near.lowerBound - 3)
-                    path.move(to: CGPoint(x: x, y: y(interpolate(keys, at: Double(x) / pps, log: param.isLog) ?? keys[0].value)))
+                    let first = CGPoint(x: x, y: y(interpolate(keys, at: Double(x) / pps, log: param.isLog) ?? keys[0].value))
+                    path.move(to: first)
+                    var last = first
                     while x <= min(size.width, near.upperBound + 3) {
                         let v = interpolate(keys, at: Double(x) / pps, log: param.isLog) ?? keys[0].value
-                        path.addLine(to: CGPoint(x: x, y: y(v)))
+                        last = CGPoint(x: x, y: y(v))
+                        path.addLine(to: last)
                         x += 1.5
                     }
-                    ctx.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 1.5, lineJoin: .round))
+                    // A faint wash from the line down to the floor of the lane, and one fine line: the shape reads at a
+                    // glance without a slab of colour over the lane.
+                    var under = path
+                    under.addLine(to: CGPoint(x: last.x, y: size.height))
+                    under.addLine(to: CGPoint(x: first.x, y: size.height))
+                    under.closeSubpath()
+                    ctx.fill(under, with: .color(color.opacity(0.07)))
+                    ctx.stroke(path, with: .color(color.opacity(0.95)), style: StrokeStyle(lineWidth: 1, lineJoin: .round))
                 }
             }
             .allowsHitTesting(false)
+            // The middle of each stretch between two points is a small handle: drag it up or down to bend the stretch
+            // into a curve, double-click it to make it straight again.
+            ForEach(Array(zip(keys, keys.dropFirst())), id: \.0.id) { a, b in
+                if a.curve != "hold", (b.time - a.time) * pps > 26 {
+                    let mid = (a.time + b.time) / 2
+                    let at = interpolate(keys, at: mid, log: param.isLog) ?? a.value
+                    Circle()
+                        .strokeBorder(color.opacity(bending == a.id ? 1 : 0.7), lineWidth: 1)
+                        .background(Circle().fill(Color.black.opacity(0.5)))
+                        .frame(width: 7, height: 7)
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
+                        .position(x: CGFloat(mid * pps), y: y(at))
+                        .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .named("lane-\(track.id)-\(param.rawValue)"))
+                            .onChanged { g in
+                                if bending == nil { bending = a.id; store.beginGesture() }
+                                // Where the pointer is between the two values, as the bend that puts the curve's middle there.
+                                let ya = y(a.value), yb = y(b.value)
+                                guard abs(yb - ya) > 2 else { return }
+                                let m = min(0.97, max(0.03, Double((g.location.y - ya) / (yb - ya))))
+                                // The curve's middle sits at 0.5^(1/(1-bend)) of the way; turned round, that gives the bend.
+                                let value = min(0.97, max(-0.97, m < 0.5 ? 1 - log(0.5) / log(m) : -(1 - log(0.5) / log(1 - m))))
+                                store.live { p in
+                                    guard let i = p.trackIndex(track.id) else { return }
+                                    var list = p.tracks[i].keys(param)
+                                    if let j = list.firstIndex(where: { $0.id == a.id }) { list[j].curve = nil; list[j].bend = abs(value) < 0.03 ? nil : value }
+                                    p.tracks[i].automation[param.rawValue] = list
+                                }
+                            }
+                            .onEnded { _ in bending = nil })
+                        .simultaneousGesture(TapGesture(count: 2).onEnded {
+                            store.mutate { p in
+                                guard let i = p.trackIndex(track.id) else { return }
+                                var list = p.tracks[i].keys(param)
+                                if let j = list.firstIndex(where: { $0.id == a.id }) { list[j].bend = nil }
+                                p.tracks[i].automation[param.rawValue] = list
+                            }
+                        })
+                        .hint("Drag up or down to bend this stretch into a curve. Double-click to straighten it.")
+                }
+            }
             if keys.isEmpty {
                 Text("Double-click to add a point")
                     .font(.system(size: 10.5))
@@ -1495,8 +1786,7 @@ struct AutomationLane: View {
             ForEach(keys) { k in
                 Circle()
                     .fill(dragging == k.id ? Color.white : color)
-                    .overlay(Circle().strokeBorder(Color.white.opacity(0.9), lineWidth: 1))
-                    .frame(width: 10, height: 10)
+                    .frame(width: 7, height: 7)
                     .scaleEffect(dragging == k.id ? 1.3 : 1)
                     .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
@@ -1520,7 +1810,7 @@ struct AutomationLane: View {
                                 store.mutate { p in
                                     guard let i = p.trackIndex(track.id) else { return }
                                     var list = p.tracks[i].keys(param)
-                                    if let j = list.firstIndex(where: { $0.id == k.id }) { list[j].curve = item.1 }
+                                    if let j = list.firstIndex(where: { $0.id == k.id }) { list[j].curve = item.1; list[j].bend = nil }
                                     p.tracks[i].automation[param.rawValue] = list
                                 }
                             }

@@ -62,6 +62,11 @@ struct SlicedCanvas: View {
     /// Points per second and scroll offset the drawing uses.
     var pps = 1.0
     var x: CGFloat = 0
+    /// Track height is what is changing: the drawing uses `target` as the height factor and `y` as its scroll offset.
+    var vertical = false
+    var y: CGFloat = 0
+    /// The track height factor the fingers have reached, for the track names, which follow it live.
+    var rows = 1.0
     /// The zoom (or track height factor) to commit.
-    @ObservationIgnored var target = 0.0
+    @ObservationIgnored var target = 0.0 { didSet { if vertical, target > 0, rows != target { rows = target } } }
 }

@@ -391,7 +391,6 @@ struct MasterHeader: View {
     var body: some View {
         let v = store.project.masterVolume ?? 0
         HStack(spacing: 9) {
-            RoundedRectangle(cornerRadius: 1.5).fill(Color.white.opacity(0.7)).frame(width: 3, height: 28)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Image(systemName: "slider.horizontal.3").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.secondary).frame(width: 14)

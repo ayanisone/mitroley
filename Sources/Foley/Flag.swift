@@ -271,6 +271,7 @@ struct FlagView: NSViewRepresentable {
                   let buffer = queue.makeCommandBuffer(), let enc = buffer.makeRenderCommandEncoder(descriptor: pass) else { return }
             let now = CACurrentMediaTime()
             frames += 1
+            Vitals.frames &+= 1
             // A new choice takes hold on the very next frame; what Automatic comes to is looked at again now and then.
             let choice = MotionLevel.chosen
             if choice != lastChoice || frames % 120 == 0 {

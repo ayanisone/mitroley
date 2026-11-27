@@ -53,7 +53,7 @@ extension VoiceAgent {
                 default: throw ServiceError(message: "direction must be in, out or fit.")
                 }
             }
-            z = min(40, max(1, z))
+            z = min(store.zoomCap, max(1, z))
             let middle = num("around") ?? visibleTimes(store).map { ($0.from + $0.to) / 2 } ?? store.player.time
             store.zoom = z
             // The timeline is laid out again at the new zoom on the next pass; then the same moment is brought back to the middle.

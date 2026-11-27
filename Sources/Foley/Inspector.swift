@@ -239,6 +239,7 @@ struct ClipPanel: View {
         if clip.take != nil {
             SectionTitle("Stems")
             Button("Split into Stems…") { Panels.clipStems(store, clip.id) }.buttonStyle(PillButtonStyle())
+            Button("Isolate the Voice…") { Panels.clipVoice(store, clip.id) }.buttonStyle(PillButtonStyle())
             Caption("ElevenLabs pulls this sound apart into voice, drums, bass, guitar, piano and other, each on its own track at the same place. Made for music. It uses credits.")
         }
 

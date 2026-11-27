@@ -9,6 +9,7 @@ struct MixerView: View {
     /// Inside the main window: no footer, and it takes whatever height it is given.
     var docked = false
     @AppStorage("mixerStyle") private var style = "console"
+    @AppStorage("showCables") private var cables = true
 
     var body: some View {
         if style == "console" { ConsoleMixer(docked: docked) } else { cards }
@@ -39,7 +40,7 @@ struct MixerView: View {
                             MasterStrip(compact: docked)
                         }
                         .frame(maxHeight: .infinity, alignment: .top)
-                        Cables(compact: docked)
+                        if cables { Cables(compact: docked) }
                     }
                     .padding(docked ? 10 : 14)
                 }
@@ -49,6 +50,7 @@ struct MixerView: View {
                 Rectangle().fill(Theme.line).frame(height: 1)
                 HStack {
                     Text("\(p.tracks.count) track\(p.tracks.count == 1 ? "" : "s")\(buses.isEmpty ? "" : ", \(buses.count) bus\(buses.count == 1 ? "" : "es")")").font(.system(size: 11.5)).foregroundStyle(Theme.secondary)
+                    CablesSwitch()
                     Spacer()
                     Text("Drag a cable from a track's socket to a bus, the master or another track · double-click a fader to reset").font(.system(size: 11.5)).foregroundStyle(Theme.tertiary)
                 }
@@ -960,5 +962,25 @@ private struct LevelBar: View {
             }
         }
         .frame(width: 5)
+    }
+}
+
+
+/// Shows or hides the cables under the mixer's strips. Hidden, the routing still works from each strip's output menu.
+struct CablesSwitch: View {
+    @AppStorage("showCables") private var on = true
+    var body: some View {
+        Button { on.toggle(); Haptic.tick(.generic) } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "point.topleft.down.to.point.bottomright.curvepath").font(.system(size: 10, weight: .semibold))
+                Text("Cables").font(.system(size: 11, weight: .medium))
+            }
+            .foregroundStyle(on ? Color.white : Theme.tertiary)
+            .padding(.horizontal, 9).frame(height: 24)
+            .background(on ? Theme.accent.opacity(0.3) : Theme.raised, in: Capsule()).contentShape(Capsule())
+        }
+        .buttonStyle(PressStyle(scale: 0.96))
+        .hint(on ? "Hide the cables under the strips. Routing still works from each strip's output menu." : "Show the cables under the strips, to route by hand.")
+        .accessibilityAddTraits(on ? .isSelected : [])
     }
 }

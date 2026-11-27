@@ -59,7 +59,7 @@ struct MainView: View {
                             PaneHandle(axis: .rows, moved: { t in
                                 if dragStart == nil { dragStart = tl }
                                 timelineHeight = min(maxTimeline, max(180, (dragStart ?? tl) - t))
-                            }, ended: { dragStart = nil })
+                            }, ended: { dragStart = nil }, nudge: 1.5)
                         }
                         // Above the timeline that follows it: laid under it, the lower half of the handle could not be reached.
                         .zIndex(2)
@@ -178,6 +178,9 @@ struct PaneHandle: View {
     let moved: (CGFloat) -> Void
     let ended: () -> Void
     var reset: (() -> Void)?
+    /// Moves the grip this far along the cross axis, where the line the eye sees is not the edge itself. The timeline
+    /// starts with a 2 pt coloured band, so the visible line there sits a point and a half below the true edge.
+    var nudge: CGFloat = 0
     @State private var hot = false
     @State private var held = false
 
@@ -188,6 +191,7 @@ struct PaneHandle: View {
             Capsule().fill(Color.white.opacity(lit ? 0.95 : 0.3))
                 .frame(width: rows ? 40 : 4, height: rows ? 4 : 40)
                 .shadow(color: .black.opacity(0.4), radius: 1.5, y: 0.5)
+                .offset(x: rows ? 0 : nudge, y: rows ? nudge : 0)
         }
         .frame(width: rows ? nil : 16, height: rows ? 16 : nil)
         .contentShape(Rectangle())
@@ -292,7 +296,10 @@ struct VideoPane: View {
                 // The picture keeps its shape inside what is left, centred; where it is shorter than that
                 // space, the extra is shared equally above it and between it and the transport.
                 PlayerLayerView(player: store.player.video, clear: true)
+                    .overlay { SubtitleOverlay() }
                     .overlay(alignment: .topTrailing) {
+                      HStack(spacing: 4) {
+                        SubtitleButton()
                         Button { openWindow(id: "picture") } label: {
                             Image(systemName: "macwindow.on.rectangle").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white)
                                 .frame(width: 28, height: 24)
@@ -300,10 +307,10 @@ struct VideoPane: View {
                         }
                         .buttonStyle(PressStyle(scale: 0.9))
                         .hint("Move the picture into a window of its own, for a second screen")
+                      }
                         .padding(6)
-                        .opacity(hovering ? 1 : 0)
+                        .opacity(hovering || store.subtitlesOn ? 1 : 0)
                     }
-                    .onHover { hovering = $0 }
                     // Clicking the picture shows the session's own settings (name, picture, revised cut, spaces).
                     .onTapGesture { store.showSession() }
                     .padding(.bottom, Self.gap + TransportBar.height + Self.gap)
@@ -351,6 +358,10 @@ struct VideoPane: View {
             .padding(.horizontal, 10)
             .padding(.bottom, Self.gap)
         }
+        .overlay { VitalsBox() }
+        // The picture's buttons show while the pointer is anywhere in this pane, including over the resource monitor
+        // or the tools. Tracked on the picture alone, they vanished the moment the pointer crossed anything laid over it.
+        .onHover { hovering = $0 }
         // The editing tools: a column at the left of the picture, level with its middle.
         .overlay(alignment: .leading) {
             ToolStrip()
@@ -529,11 +540,13 @@ struct DockPanel: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        let which = store.dock ?? "mixer"
+        // Only the mixer lives here now; the library has its own place down the left side.
+        let which = "mixer"
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                SegmentedPill(options: [(value: "mixer", label: "Mixer"), (value: "library", label: "Library")], selection: which, segmentWidth: 66, height: 21, size: 11.5) { store.dock = $0 }
+                Text("Mixer").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.secondary).padding(.leading, 4)
                 Spacer()
+                CablesSwitch()
                 if which == "mixer" {
                     Button { mixerStyle = mixerStyle == "console" ? "classic" : "console" } label: {
                         Text(mixerStyle == "console" ? "Console" : "Cards").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.secondary)
@@ -554,10 +567,9 @@ struct DockPanel: View {
                 .buttonStyle(PressStyle(scale: 0.9))
                 .hint("Close")
             }
-            // The switcher is built like the Stereo and Spatial one: the same 6 pt of trough round its highlight.
-            .padding(.horizontal, 10).frame(height: 38)
+            .padding(.horizontal, 10).frame(height: 34)
             Rectangle().fill(Theme.line).frame(height: 1)
-            if which == "library" { LibraryView(docked: true) } else { MixerView(docked: true) }
+            MixerView(docked: true)
         }
         .background(Theme.panel)
     }
@@ -572,6 +584,8 @@ struct PictureWindow: View {
             Color.black
             if store.project.video != nil {
                 PlayerLayerView(player: store.player.video)
+                    .overlay { SubtitleOverlay() }
+                    .overlay(alignment: .topTrailing) { SubtitleButton().padding(8) }
             } else {
                 Text("No video in this session yet").font(.system(size: 13)).foregroundStyle(Theme.secondary)
             }

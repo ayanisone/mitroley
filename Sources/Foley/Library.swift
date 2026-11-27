@@ -366,6 +366,10 @@ struct LibraryView: View {
     /// Down the left side of the main window: places on the left, the sounds beside them, a preview at the foot.
     var side = false
     @State private var overPlace: String?
+    @AppStorage("browserNote") private var showNote = true
+    @AppStorage("browserShape") private var showShape = false
+    @AppStorage("browserTone") private var showTone = true
+    @AppStorage("browserLength") private var showLength = true
 
     private var lengths: (Double, Double) { length == 1 ? (0, 0.5) : length == 2 ? (0.5, 3) : length == 3 ? (3, .infinity) : (0, .infinity) }
 
@@ -451,6 +455,20 @@ struct LibraryView: View {
                     pick("Tone", tone?.title, [("Any tone", { tone = nil })] + SoundItem.Tone.allCases.map { t in (t.title, { tone = t }) })
                     pick("Length", length == 1 ? "Under ½ s" : length == 2 ? "½ to 3 s" : length == 3 ? "Over 3 s" : nil,
                          [("Any length", { length = 0 }), ("Under ½ s", { length = 1 }), ("½ to 3 s", { length = 2 }), ("Over 3 s", { length = 3 })])
+                    Menu {
+                        Section("Show beside each sound") {
+                            Toggle("Note", isOn: $showNote)
+                            Toggle("Shape", isOn: $showShape)
+                            Toggle("Tone", isOn: $showTone)
+                            Toggle("Length", isOn: $showLength)
+                        }
+                    } label: {
+                        // Three even lines: a mark that is the same on both sides, so it sits dead centre in its pill.
+                        Image(systemName: "line.3.horizontal").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.secondary)
+                            .frame(width: 28, height: 20).background(Color.white.opacity(0.06), in: Capsule()).contentShape(Capsule())
+                    }
+                    .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                    .hint("Choose what is shown beside each sound: its note, shape, tone and length")
                     Spacer(minLength: 0)
                     Text(library.scanning ? library.progress : "\(results.count)\(results.count >= 600 ? "+" : "")")
                         .font(.system(size: 10.5).monospacedDigit()).foregroundStyle(Theme.tertiary).lineLimit(1)
@@ -707,6 +725,15 @@ private struct LibraryRow: View {
     let like: () -> Void
     let pick: () -> Void
     @State private var over = false
+    @AppStorage("browserNote") private var showNote = true
+    @AppStorage("browserShape") private var showShape = false
+    @AppStorage("browserTone") private var showTone = true
+    @AppStorage("browserLength") private var showLength = true
+    private func chip(_ s: String) -> some View {
+        Text(s).font(.system(size: 9.5, weight: .medium)).foregroundStyle(Theme.secondary).lineLimit(1).fixedSize()
+            .padding(.horizontal, 5).frame(height: 16)
+            .background(Color.white.opacity(0.07), in: Capsule())
+    }
     private var take: Take { Take(file: item.path, duration: item.duration) }
 
     var body: some View {
@@ -716,7 +743,7 @@ private struct LibraryRow: View {
     /// One line in the browser: the sound's outline, its name, its length.
     private var slim: some View {
         let playing = store.auditionPath == item.path
-        return HStack(spacing: 7) {
+        return HStack(spacing: 5) {
             ZStack {
                 if playing { Image(systemName: "speaker.wave.2.fill").font(.system(size: 9)).foregroundStyle(Theme.accent) }
                 else { Envelope(points: item.envelope, color: Theme.accent.opacity(picked ? 0.9 : 0.5)) }
@@ -725,7 +752,14 @@ private struct LibraryRow: View {
             Text(item.name).font(.system(size: 12, weight: picked ? .semibold : .regular)).lineLimit(1).truncationMode(.middle)
                 .foregroundStyle(picked ? Color.white : Theme.current.ink.opacity(0.86))
             Spacer(minLength: 4)
-            Text(shortTime(item.duration)).font(.system(size: 10.5).monospacedDigit()).foregroundStyle(Theme.tertiary)
+            // The same details the full library shows, each one switchable from the browser's list menu.
+            if showNote, let note = item.note { chip(note) }
+            if showShape { chip(item.shape.title) }
+            if showTone { chip(item.tone.title) }
+            if showLength {
+                Text(shortTime(item.duration)).font(.system(size: 10.5).monospacedDigit()).foregroundStyle(Theme.tertiary)
+                    .frame(minWidth: 34, alignment: .trailing)
+            }
         }
         .padding(.horizontal, 7).frame(height: 25)
         .background(picked ? Theme.accent.opacity(0.22) : over ? Theme.raised : Color.clear, in: RoundedRectangle(cornerRadius: 5, style: .continuous))

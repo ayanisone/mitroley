@@ -105,6 +105,7 @@ struct FoleyApp: App {
                 Menu("Use the Film's Own Sound") {
                     Button("As One Track") { Panels.originalSound(store, stems: false) }
                     Button("Split into Stems…") { Panels.originalSound(store, stems: true) }
+                    Button("Voices Only, on a Track…") { Task { do { try await store.isolateFilmVoice() } catch { store.say(error.localizedDescription, error: true) } } }
                 }
                 .disabled(store.project.video == nil)
                 Button("Dub Into Other Languages…") { store.showDub = true }
@@ -131,10 +132,10 @@ struct FoleyApp: App {
                 Button(store.dock == "mixer" ? "Hide Mixer" : "Show Mixer") { store.toggleDock("mixer") }.keyboardShortcut("m", modifiers: [.command, .option])
                 Button(store.browser ? "Hide Library" : "Show Library") { store.browser.toggle() }.keyboardShortcut("l", modifiers: [.command, .option])
                 Button(store.sideOpen ? "Hide the Right Panel" : "Show the Right Panel") { store.toggleSide() }.keyboardShortcut("i", modifiers: [.command, .option])
-                Button(store.dock == "library" ? "Hide Library Under the Timeline" : "Library Under the Timeline") { store.toggleDock("library") }
                 WindowButton(id: "picture", title: "Picture in Its Own Window", symbol: "", key: "p", help: "", menu: true, plain: true)
                 WindowButton(id: "mixer", title: "Mixer in Its Own Window", symbol: "", key: "m", help: "", menu: true, plain: true)
                 WindowButton(id: "library", title: "Library in Its Own Window", symbol: "", key: "l", help: "", menu: true, plain: true)
+                Button(store.subtitlesOn ? "Hide Subtitles" : "Show Subtitles") { store.subtitlesOn.toggle() }.keyboardShortcut("u", modifiers: [.command, .option])
                 Menu("Theme") {
                     ForEach(Palette.all) { p in
                         Toggle(p.name, isOn: Binding(get: { store.theme == p.id }, set: { if $0 { store.theme = p.id } }))
@@ -145,6 +146,7 @@ struct FoleyApp: App {
                         Toggle(m.title, isOn: Binding(get: { MotionLevel.Choice.shared.level == m }, set: { if $0 { MotionLevel.Choice.shared.level = m; store.say("Motion · \(m.title)") } }))
                     }
                 }
+                Button(store.vitalsOn ? "Hide Resource Monitor" : "Show Resource Monitor") { store.vitalsOn.toggle() }.keyboardShortcut("r", modifiers: [.command, .option])
                 Toggle("Hint Box", isOn: Binding(get: { UserDefaults.standard.object(forKey: "hintBox") as? Bool ?? true }, set: { UserDefaults.standard.set($0, forKey: "hintBox") }))
                 Button("Check the Mix at the Cuts…") { store.showCutCheck = true }.keyboardShortcut("k", modifiers: [.command, .option])
                 Divider()
@@ -371,6 +373,18 @@ enum Panels {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         Task {
             do { try await store.splitClipIntoStems(id) } catch { store.say(error.localizedDescription, error: true) }
+        }
+    }
+
+    static func clipVoice(_ store: Store, _ id: UUID) {
+        let alert = NSAlert()
+        alert.messageText = "Keep only the voice in this sound?"
+        alert.informativeText = "ElevenLabs takes out the music, noise and everything else and leaves the voice. It is added to the clip as a new take, so the sound as it was is still there as the take before it. This uses credits."
+        alert.addButton(withTitle: "Isolate the Voice")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        Task {
+            do { try await store.isolateVoice(id) } catch { store.say(error.localizedDescription, error: true) }
         }
     }
 

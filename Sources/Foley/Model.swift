@@ -16,6 +16,9 @@ struct Keyframe: Codable, Equatable, Identifiable {
     var value: Double
     /// How the value travels to the next keyframe: nil = straight line, "hold" = stay then jump (cuts), "smooth" = ease in and out.
     var curve: String?
+    /// How far the stretch to the next keyframe is bent, -1…1. 0 or nil = straight. Above 0 it stays near this
+    /// keyframe's value and moves late; below 0 it moves early and settles into the next one.
+    var bend: Double?
 }
 
 enum TrackKind: String, Codable, CaseIterable, Identifiable {
@@ -497,6 +500,8 @@ struct Project: Codable, Equatable {
     var voice: VoiceSettings?       // how spoken lines are made: voice, model, stability and so on
     var rack: [Effect]?             // master effects; nil = a session from before the rack
     var mixFormat: MixFormat?       // what the session is mixed for; nil = 7.1.4
+    var subtitles: [SubtitleLine]?  // what is said in the film, for reading on the picture
+    var subtitleLanguage: String?   // the language it was spoken in, as ElevenLabs named it
     var format: MixFormat { mixFormat ?? .atmos714 }
     var music: MusicOptions?
     var revision: Revision?
@@ -590,6 +595,11 @@ func interpolate(_ keys: [Keyframe], at t: Double, log isLog: Bool = false) -> D
         if a.curve == "hold" { return a.value }
         var f = b.time > a.time ? (t - a.time) / (b.time - a.time) : 1
         if a.curve == "smooth" { f = f * f * (3 - 2 * f) }
+        // A bent stretch: a power curve, so it is smooth, never overshoots, and passes through both keyframes.
+        if let bend = a.bend, abs(bend) > 0.001 {
+            let power = 1 / max(0.03, 1 - min(0.97, abs(bend)))
+            f = bend > 0 ? pow(f, power) : 1 - pow(1 - f, power)
+        }
         if isLog, a.value > 0, b.value > 0 { return exp(log(a.value) + f * (log(b.value) - log(a.value))) }
         return a.value + f * (b.value - a.value)
     }
@@ -744,4 +754,16 @@ enum MixFormat: String, Codable, CaseIterable, Identifiable {
         }
         return o
     }
+}
+
+
+/// One subtitle: what was said, when, and the same words in Latin letters and in English once those have been made.
+struct SubtitleLine: Codable, Equatable, Identifiable {
+    var id = UUID()
+    var start: Double
+    var end: Double
+    var speaker: String
+    var text: String
+    var roman: String?
+    var english: String?
 }

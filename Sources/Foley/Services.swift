@@ -47,7 +47,8 @@ enum Secrets {
     enum Key: String {
         case elevenLabs = "elevenlabs"
         case anthropic = "anthropic"
-        var env: String { self == .elevenLabs ? "ELEVENLABS_API_KEY" : "ANTHROPIC_API_KEY" }
+        case sarvam = "sarvam"
+        var env: String { self == .elevenLabs ? "ELEVENLABS_API_KEY" : self == .anthropic ? "ANTHROPIC_API_KEY" : "SARVAM_API_KEY" }
     }
     private static var cache: [String: String]?
     private static var fileURL: URL { AppPaths.support.appendingPathComponent("keys.json") }
@@ -203,6 +204,26 @@ enum ElevenLabs {
         return data
     }
 
+    /// Takes everything but the voice out of a recording (ElevenLabs voice isolator). Returns the voice alone, as MP3.
+    static func isolate(_ file: URL) async throws -> Data {
+        let boundary = "mitroley-" + UUID().uuidString
+        var req = try authed("https://api.elevenlabs.io/v1/audio-isolation", method: "POST")
+        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        var body = Data()
+        let ext = file.pathExtension.lowercased()
+        let type = ext == "wav" ? "audio/wav" : ext == "mp3" ? "audio/mpeg" : "audio/mp4"
+        body.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"sound.\(ext.isEmpty ? "m4a" : ext)\"\r\nContent-Type: \(type)\r\n\r\n".data(using: .utf8)!)
+        body.append(try Data(contentsOf: file))
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 900
+        config.timeoutIntervalForResource = 1500
+        let (data, resp) = try await URLSession(configuration: config).upload(for: req, from: body)
+        guard let http = resp as? HTTPURLResponse else { throw ServiceError(message: "No response from ElevenLabs.") }
+        guard http.statusCode == 200, data.count > 500 else { throw ServiceError(message: "ElevenLabs voice isolator: " + describe(data, status: http.statusCode)) }
+        return data
+    }
+
     // MARK: Voices
 
     /// A request to ElevenLabs carrying the saved key.
@@ -234,8 +255,8 @@ enum ElevenLabs {
 
     static var voiceModel: String { UserDefaults.standard.string(forKey: "elevenVoice") ?? "eleven_multilingual_v2" }
 
-    /// The film's speech as lines: who, what, from when to when.
-    static func transcribe(_ file: URL) async throws -> [SpokenLine] {
+    /// What ElevenLabs heard in a recording: every word with its speaker and times, and the language.
+    private static func heard(_ file: URL) async throws -> [String: Any] {
         func attempt(_ model: String) async throws -> [String: Any] {
             let boundary = "mitroley-" + UUID().uuidString
             var req = try authed("https://api.elevenlabs.io/v1/speech-to-text", method: "POST")
@@ -253,8 +274,12 @@ enum ElevenLabs {
             guard http.statusCode == 200 else { throw ServiceError(message: "ElevenLabs transcription: " + describe(data, status: http.statusCode)) }
             return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
         }
-        var obj: [String: Any]
-        do { obj = try await attempt("scribe_v2") } catch { obj = try await attempt("scribe_v1") }
+        do { return try await attempt("scribe_v2") } catch { return try await attempt("scribe_v1") }
+    }
+
+    /// The film's speech as lines: who, what, from when to when.
+    static func transcribe(_ file: URL) async throws -> [SpokenLine] {
+        let obj = try await heard(file)
         var lines: [SpokenLine] = []
         var names: [String: String] = [:]
         for w in (obj["words"] as? [[String: Any]]) ?? [] where (w["type"] as? String) == "word" {
@@ -271,6 +296,32 @@ enum ElevenLabs {
             }
         }
         return lines
+    }
+
+    /// The film's speech cut for reading on screen: short lines that end at a pause, a full stop or a change of
+    /// speaker, none longer than two lines of a subtitle or about six seconds. Also the language it was spoken in.
+    static func captions(_ file: URL) async throws -> (lines: [SpokenLine], language: String?) {
+        let obj = try await heard(file)
+        var lines: [SpokenLine] = []
+        var names: [String: String] = [:]
+        var closed = true
+        for w in (obj["words"] as? [[String: Any]]) ?? [] where (w["type"] as? String) == "word" {
+            guard let text = w["text"] as? String, let start = w.num("start"), let end = w.num("end") else { continue }
+            let id = (w["speaker_id"] as? String) ?? "speaker_0"
+            if names[id] == nil { names[id] = "Speaker \(names.count + 1)" }
+            let speaker = names[id]!
+            if !closed, var last = lines.last, last.speaker == speaker, start - last.end < 0.7,
+               last.text.count + text.count < 64, end - last.start < 6 {
+                last.text += " " + text; last.end = end
+                lines[lines.count - 1] = last
+            } else {
+                lines.append(SpokenLine(speaker: speaker, text: text, start: start, end: end))
+            }
+            // A sentence that has ended closes the line, once there is enough of it to be worth a line of its own.
+            let stop = text.last.map { ".?!।॥。？！".contains($0) } ?? false
+            closed = stop && (lines.last?.text.count ?? 0) > 18
+        }
+        return (lines, (obj["language_code"] as? String).flatMap { $0.isEmpty ? nil : $0 })
     }
 
     static func voices(search: String? = nil) async throws -> [Voice] {

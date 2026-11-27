@@ -45,7 +45,12 @@ final class Store {
             if selection != .none, showClaude, !anyAgentRunning { showClaude = false }
         }
     }
-    var zoom = 1.0
+    /// Never anything but a real number in range: a bad value here becomes a timeline with no width, which AppKit will not survive.
+    var zoom = 1.0 { didSet { if !zoom.isFinite || zoom < 1 || zoom > zoomCap { zoom = oldValue.isFinite ? min(zoomCap, max(1, zoom.isFinite ? zoom : oldValue)) : 1 } } }
+    /// How far in the timeline can be zoomed, as a multiple of fitting the film in the window. Set by the timeline: far
+    /// enough to see single samples of the sound on a short film, less on a long one so the timeline never becomes
+    /// wider than the drawing system can place things exactly.
+    @ObservationIgnored var zoomCap = 40.0
     /// What a click or drag on the timeline does.
     var tool = Tool.pointer {
         didSet { if tool != .marquee { marquee = nil } }
@@ -57,7 +62,9 @@ final class Store {
     @ObservationIgnored var scrollTimeline: ((CGPoint) -> Void)?
     /// Set by the timeline: re-measures its scrolling area after row heights change.
     @ObservationIgnored var relayoutTimeline: (() -> Void)?
-    var vzoom = 1.0
+    /// The timeline's own pinch handler, so a test can drive exactly what the trackpad drives.
+    @ObservationIgnored var debugPinch: ((CGFloat, CGPoint, Bool, Bool) -> Void)?
+    var vzoom = 1.0 { didSet { if !vzoom.isFinite || vzoom < 0.75 || vzoom > 3 { vzoom = oldValue.isFinite ? min(3, max(0.75, vzoom.isFinite ? vzoom : oldValue)) : 1 } } }
     var editMode = EditMode(rawValue: UserDefaults.standard.string(forKey: "editMode") ?? "") ?? .snap {
         didSet { UserDefaults.standard.set(editMode.rawValue, forKey: "editMode") }
     }
@@ -89,6 +96,10 @@ final class Store {
     var showExport = false
     var showSettings = false
     var showClaude = false
+    /// The resource monitor pinned in a corner of the picture. Held here so the menu's tick, Settings and the card agree at once.
+    var vitalsOn: Bool = UserDefaults.standard.bool(forKey: "vitalsOn") { didSet { UserDefaults.standard.set(vitalsOn, forKey: "vitalsOn") } }
+    /// Subtitles drawn over the picture.
+    var subtitlesOn: Bool = UserDefaults.standard.bool(forKey: "subtitlesOn") { didSet { UserDefaults.standard.set(subtitlesOn, forKey: "subtitlesOn") } }
     /// The panel down the right side put away, to give the picture, timeline and mixer the whole width.
     var sideHidden: Bool = UserDefaults.standard.bool(forKey: "sideHidden") { didSet { UserDefaults.standard.set(sideHidden, forKey: "sideHidden") } }
     /// The right side is showing: the inspector unless put away, and always while Claude is open.
@@ -108,9 +119,10 @@ final class Store {
     /// Asks a small panel to open itself: "presets" or "duck", for the selected track. Set by the voice helper.
     var peek: String?
     /// What is open under the timeline: "mixer", "library" or nothing. Remembered between launches.
-    var dock: String? = UserDefaults.standard.string(forKey: "dock") { didSet { UserDefaults.standard.set(dock, forKey: "dock"); if dock == "library", browser { browser = false } } }
+    /// What is docked under the timeline: the mixer, or nothing. (A library used to be an option here; a saved choice of it opens the mixer.)
+    var dock: String? = UserDefaults.standard.string(forKey: "dock").map { _ in "mixer" } { didSet { UserDefaults.standard.set(dock, forKey: "dock") } }
     /// The library as a browser down the left side of the window.
-    var browser: Bool = UserDefaults.standard.bool(forKey: "browser") { didSet { UserDefaults.standard.set(browser, forKey: "browser"); if browser, dock == "library" { dock = nil } } }
+    var browser: Bool = UserDefaults.standard.bool(forKey: "browser") { didSet { UserDefaults.standard.set(browser, forKey: "browser") } }
     func toggleDock(_ which: String) { dock = dock == which ? nil : which }
     /// Languages being dubbed right now, and how each is getting on.
     var dubJobs: [DubJob] = []

@@ -383,6 +383,9 @@ struct SettingsSheet: View {
     @State private var anthropic = ""
     @State private var elevenStatus: (ok: Bool, message: String)?
     @State private var anthropicProblem: String?
+    @State private var sarvam = ""
+    @State private var sarvamProblem: String?
+    @AppStorage("subtitleBy") private var subtitleBy = "claude"
     @State private var checking = false
     @AppStorage("claudeModel") private var claudeModel = "claude-opus-5-5"
     @AppStorage("elevenFormat") private var elevenFormat = "mp3_44100_128"
@@ -398,6 +401,9 @@ struct SettingsSheet: View {
     @AppStorage("mixerStyle") private var mixerStyle = "console"
     @AppStorage("cableLook") private var cableLook = 0
     @AppStorage("haptics") private var haptics = true
+    @State private var waveDetail = AudioCache.peaksPerSecond
+    @State private var waveColour = WaveCanvas.colourMode
+    @AppStorage("showCables") private var showCables = true
     @AppStorage("backdropPointer") private var backdropPointer = true
     @AppStorage("voiceAgentVoice") private var helperVoice = ""
     @AppStorage("voiceAgentVoiceName") private var helperVoiceName = ""
@@ -496,6 +502,30 @@ struct SettingsSheet: View {
                 Text("Console").tag("console")
                 Text("Cards (as before)").tag("classic")
             }
+            Toggle("Cables under the mixer's strips", isOn: $showCables)
+                .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
+            Picker("Waveform colours", selection: Binding(get: { waveColour }, set: { v in
+                UserDefaults.standard.set(v, forKey: "waveColour")
+                waveColour = v
+                store.zoom = store.zoom == 1 ? 1.000001 : 1 + (store.zoom - 1) * 0.999999   // makes every clip draw again
+            })) {
+                Text("The track's colour").tag(0)
+                Text("Colour map: pale, teal for lows to peach for highs").tag(1)
+                Text("Multiband: strong, blue for lows through green to amber").tag(2)
+            }
+            Picker("Waveform detail", selection: Binding(get: { waveDetail }, set: { v in
+                UserDefaults.standard.set(v, forKey: "waveDetail")
+                AudioCache.shared.resetPeaks()
+                // A nudge that makes every clip draw its waveform again.
+                store.zoom = store.zoom == 1 ? 1.000001 : 1 + (store.zoom - 1) * 0.999999
+                waveDetail = v
+            })) {
+                Text("200 points a second (as before)").tag(200.0)
+                Text("400").tag(400.0)
+                Text("800").tag(800.0)
+                Text("1600").tag(1600.0)
+                Text("3200 (finest)").tag(3200.0)
+            }
             Picker("Cables", selection: $cableLook) {
                 Text("Fading into where they go").tag(0)
                 Text("Dotted").tag(1)
@@ -508,6 +538,8 @@ struct SettingsSheet: View {
             Toggle("The picture reacts to the pointer (experimental)", isOn: $backdropPointer)
                 .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
             Toggle("Taps in the trackpad: at 0 dB, a knob's centre, a plug finding a jack", isOn: $haptics)
+                .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
+            Toggle("Resource monitor in a corner: processor, memory, graphics memory, frame rate, session size", isOn: Binding(get: { store.vitalsOn }, set: { store.vitalsOn = $0 }))
                 .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
             Toggle("Hint box in the corner: says what the pointer is on", isOn: $hintBox)
                 .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
@@ -531,6 +563,20 @@ struct SettingsSheet: View {
                 Text("Claude Fable 5.2").tag("claude-fable-5-2")
                 Text("Claude Sonnet 5.5").tag("claude-sonnet-5-5")
             }
+            SectionTitle("Sarvam")
+            SecureField(Secrets.has(.sarvam) ? "Paste a new key to replace the saved one" : "Sarvam API key (optional)", text: $sarvam)
+                .textFieldStyle(.roundedBorder)
+            if let sarvamProblem {
+                Label(sarvamProblem, systemImage: "exclamationmark.triangle.fill").font(.system(size: 11.5)).foregroundStyle(Theme.danger)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if let hint = Secrets.hint(.sarvam) {
+                Text(hint).font(.system(size: 11.5)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Picker("Subtitles into English by", selection: $subtitleBy) {
+                Text("Claude Sonnet").tag("claude")
+                Text("Sarvam").tag("sarvam")
+            }
+            Caption("Sarvam is made for Indian languages. It turns subtitle lines into Latin letters and into English. The listening itself is still done by ElevenLabs, which gives the time of every word; Sarvam's own listening only takes clips under 30 seconds.")
             Text("Keys are stored on this Mac in a file only your account can read, and are sent only to the service they belong to. When Claude works on a session, frames of the video and the storyboard are sent to Anthropic.")
                 .font(.system(size: 11.5)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
 
@@ -542,7 +588,10 @@ struct SettingsSheet: View {
                     // Keys are checked before they are stored, so a bad paste is caught here and not at the first request.
                     let e = eleven.trimmingCharacters(in: .whitespacesAndNewlines), a = anthropic.trimmingCharacters(in: .whitespacesAndNewlines)
                     anthropicProblem = a.isEmpty ? nil : Secrets.problem(a)
-                    if anthropicProblem != nil { return }
+                    let sv = sarvam.trimmingCharacters(in: .whitespacesAndNewlines)
+                    sarvamProblem = sv.isEmpty ? nil : Secrets.problem(sv)
+                    if anthropicProblem != nil || sarvamProblem != nil { return }
+                    if !sv.isEmpty { Secrets.set(.sarvam, sv); sarvam = "" }
                     checking = true
                     Task {
                         var ok = true

@@ -120,22 +120,50 @@ struct SegmentedPill<T: Hashable>: View {
     /// A choice made but not yet applied (see settleFirst).
     @State private var chosen: Int?
 
-    private func centre(_ i: Int) -> CGFloat { CGFloat(i) * segmentWidth + segmentWidth / 2 }
-    private func index(at x: CGFloat) -> Int { min(options.count - 1, max(0, Int((x / segmentWidth).rounded(.down)))) }
+    /// Each segment as wide as its own word plus this much on either side, instead of all the same width. With words of
+    /// different lengths, equal widths leave a short word with more room round it than a long one.
+    var hug: CGFloat?
+
+    /// Where a word's ink really is: letters carry a little empty space on each side that differs from letter to letter
+    /// (an L has more on its left than a y has on its right), so a word centred by its box sits a touch to one side.
+    /// Returns the ink's width and how far to move the word so the ink, not the box, is centred.
+    private func ink(_ label: String) -> (width: CGFloat, nudge: CGFloat) {
+        let font = NSFont.systemFont(ofSize: size, weight: .semibold)
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: label, attributes: [.font: font]))
+        let box = CTLineGetImageBounds(line, nil)
+        let advance = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+        guard box.width > 0 else { return (advance, 0) }
+        return (box.width, advance / 2 - box.midX)
+    }
+    private var widths: [CGFloat] {
+        guard let hug else { return options.map { _ in segmentWidth } }
+        // Whole points, and an even number of them, so the word's centre and the highlight's fall on the same pixel.
+        return options.map { o in (((ink(o.label).width + hug * 2) / 2).rounded(.up)) * 2 }
+    }
+    private func left(_ i: Int) -> CGFloat { widths.prefix(i).reduce(0, +) }
+    private func centre(_ i: Int) -> CGFloat { left(i) + widths[i] / 2 }
+    private func index(at x: CGFloat) -> Int {
+        var edge: CGFloat = 0
+        for (i, w) in widths.enumerated() { edge += w; if x < edge { return i } }
+        return options.count - 1
+    }
 
     // One highlight that slides: click a segment and it glides there; press and drag and it follows the pointer
     // exactly, then settles on the segment it is over when let go.
     var body: some View {
         let selected = chosen ?? (options.firstIndex { $0.value == selection } ?? 0)
         let last = centre(max(0, options.count - 1))
-        let x = drag.map { min(last, max(segmentWidth / 2, $0)) } ?? centre(selected)
+        let widths = self.widths
+        let x = drag.map { min(last, max(widths[0] / 2, $0)) } ?? centre(selected)
         let under = drag == nil ? selected : index(at: x)
+        let pill = widths[under]
         ZStack(alignment: .leading) {
             Capsule().fill(Color.white.opacity(pressed ? 0.24 : 0.18))
                 // A little smaller than its segment, so there is the same even margin of the trough all round it.
-                .frame(width: segmentWidth - 4, height: height - 4)
+                .frame(width: pill - 4, height: height - 4)
                 .scaleEffect(pressed ? 0.96 : 1)
-                .offset(x: x - segmentWidth / 2 + 2)
+                .offset(x: x - pill / 2 + 2)
+                .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.8), value: pill)
                 .animation(drag == nil ? (reduceMotion ? .easeOut(duration: 0.12) : .spring(response: 0.3, dampingFraction: 0.8)) : nil, value: x)
                 .animation(.spring(response: 0.22, dampingFraction: 0.85), value: pressed)
             HStack(spacing: 0) {
@@ -143,7 +171,9 @@ struct SegmentedPill<T: Hashable>: View {
                     Text(option.label)
                         .font(.system(size: size, weight: .semibold))
                         .foregroundStyle(i == under ? Color.white : Theme.secondary)
-                        .frame(width: segmentWidth, height: height)
+                        .fixedSize()
+                        .offset(x: ink(option.label).nudge)
+                        .frame(width: widths[i], height: height)
                         .animation(.easeOut(duration: 0.12), value: under)
                 }
             }
@@ -156,7 +186,7 @@ struct SegmentedPill<T: Hashable>: View {
                 if drag != nil || abs(g.translation.width) > 3 { drag = g.location.x }
             }
             .onEnded { g in
-                let i = index(at: min(last, max(segmentWidth / 2, drag ?? g.location.x)))
+                let i = index(at: min(last, max(widths[0] / 2, drag ?? g.location.x)))
                 pressed = false
                 drag = nil
                 guard options[i].value != selection else { return }
