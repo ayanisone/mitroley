@@ -1,0 +1,13 @@
+{
+  "name": "mitroley",
+  "version": "0.1.0",
+  "description": "Fit sound effects and ambience to picture: MCP server for the mitroley Mac app",
+  "license": "SEE LICENSE IN LICENSE",
+  "repository": { "type": "git", "url": "git+https://github.com/ayanisone/mitroley.git" },
+  "os": ["darwin"],
+  "bin": { "mitroley-mcp": "bin/mitroley-mcp" },
+  "keywords": ["plugin", "mcp", "audio", "foley", "sfx"],
+  "mcpServers": {
+    "mitroley": { "command": "./bin/mitroley-mcp" }
+  }
+}

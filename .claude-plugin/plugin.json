@@ -1,0 +1,9 @@
+{
+  "name": "mitroley",
+  "version": "0.1.0",
+  "description": "Fit sound effects and ambience to picture: MCP server for the mitroley Mac app",
+  "repository": "https://github.com/ayanisone/mitroley",
+  "mcpServers": {
+    "mitroley": { "command": "${CLAUDE_PLUGIN_ROOT}/bin/mitroley-mcp" }
+  }
+}

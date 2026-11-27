@@ -1,0 +1,10 @@
+#!/bin/sh
+# Starts mitroley's MCP server from wherever the plugin is installed.
+# Builds the app first if the binary is missing (macOS only).
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+BIN="$ROOT/build/mitroley.app/Contents/MacOS/foley-mcp"
+if [ ! -x "$BIN" ]; then
+  echo "mitroley: building app (first run)..." >&2
+  (cd "$ROOT" && ./build.sh >&2) || { echo "mitroley: build failed; needs macOS 15+ and Xcode Command Line Tools" >&2; exit 1; }
+fi
+exec "$BIN" "$@"
