@@ -34,7 +34,7 @@ struct LanesRoot: View {
         .coordinateSpace(.named("lanes"))
         // During a pinch the one-pass drawing stands in for what is in the lanes. Only the contents step aside: the
         // tint behind them stays, so the timeline and the track names over it keep exactly the tone they have at rest.
-        .opacity(live.active ? 0 : 1)
+        .opacity(live.active ? 0.01 : 1)
         // Room for the track names on the left and the ruler strip on top, which float over this.
         .padding(.leading, Metrics.header + 1)
         .padding(.top, Metrics.ruler + Metrics.film + Metrics.scene)
@@ -56,7 +56,7 @@ struct PinnedRoot: View {
                 SceneLane(pps: pps)
             }
         }
-        .opacity(live.active ? 0 : 1)
+        .opacity(live.active ? 0.01 : 1)
         .frame(width: contentWidth, height: Metrics.ruler + Metrics.film + Metrics.scene, alignment: .topLeading)
         .background { GlassCover() }
     }
@@ -71,13 +71,13 @@ struct HeadersRoot: View {
             // While track height is being changed these are the real names, sized to the height the fingers have reached
             // and moved to where the lanes are being drawn, so nothing about their look changes.
             TrackHeaders().frame(width: Metrics.header)
-                .offset(y: live.active && live.vertical ? scroll.y - live.y : 0)
+                .offset(y: live.active ? scroll.y - live.y : 0)
             Rectangle().fill(Theme.line).frame(width: 1)
         }
         // Exactly the height it is given, with the names hung from the top: while the tracks are being made taller the
         // names are taller than this, and without a least height of nothing they were centred and slid out of step.
         .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
-        .background { GlassCover() }
+        .background { PanelTint() }
     }
 }
 
@@ -245,7 +245,11 @@ struct TimelineHost: NSViewRepresentable {
         var scroll: TimelineScroll?
         var contentWidth: CGFloat = 0
         var pps = 0.0
+        /// Where the timeline should be scrolled to once it is big enough, and until when to keep trying. After a zoom
+        /// the place may lie beyond the old size; scrolled once and forgotten, the view was cut short and landed on
+        /// other tracks.
         var pending: CGPoint?
+        var pendingUntil = 0.0
         var laying = false
         var stale = true
         var lanesHeight: CGFloat = 0
@@ -275,6 +279,7 @@ struct TimelineHost: NSViewRepresentable {
             guard let v = view else { return }
             let o = v.contentView.bounds.origin
             scroll?.set(x: o.x, y: o.y)
+            if let s = scroll, s.height != v.contentView.bounds.height { s.height = v.contentView.bounds.height }
             MainActor.assumeIsolated { place() }
         }
 
@@ -288,6 +293,7 @@ struct TimelineHost: NSViewRepresentable {
             let pinnedHeight = Metrics.ruler + Metrics.film + Metrics.scene
             let side = Metrics.header + 1
             let viewport = v.contentView.bounds.size
+            if let s = scroll, s.height != viewport.height { s.height = viewport.height }
             // Asking SwiftUI how tall everything is means measuring every row; only done when rows may have changed.
             if stale {
                 stale = false
@@ -312,9 +318,10 @@ struct TimelineHost: NSViewRepresentable {
                 started = true
                 scrollTo(.zero)
             }
-            if let p = pending {
-                pending = nil
+            if let p = pending, let v = view {
                 scrollTo(p)
+                let o = v.contentView.bounds.origin
+                if (abs(o.x - p.x) < 1 && abs(o.y - p.y) < 1) || CACurrentMediaTime() > pendingUntil { pending = nil }
             }
         }
 
@@ -383,9 +390,16 @@ struct TimelineHost: NSViewRepresentable {
         store.scrollTimeline = { [weak c] p in
             // The document may still be the old size; scroll now and again once it has been laid out.
             c?.pending = p
+            c?.pendingUntil = CACurrentMediaTime() + 0.6
             c?.scrollTo(p)
         }
-        store.relayoutTimeline = { [weak c] in DispatchQueue.main.async { c?.stale = true; c?.layout() } }
+        store.relayoutTimeline = { [weak c] in
+            // Measured again a few times as SwiftUI settles at the new sizes, so the document reaches its real size and a
+            // scroll that is waiting for it can land.
+            for delay in [0, 0.06, 0.15, 0.3] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { c?.stale = true; c?.layout() }
+            }
+        }
         DispatchQueue.main.async { v.addSubview(c.bar, positioned: .above, relativeTo: nil); c.layout(); c.follow() }
         return v
     }

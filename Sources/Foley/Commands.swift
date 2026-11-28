@@ -586,6 +586,132 @@ final class Commands {
             }
             w.setFrame(home, display: true)
             return CommandResult(json: ["steps": steps, "per_second": Double(steps) / seconds, "worst_ms": worst * 1000, "steps_over_20ms": slow])
+        case "debug_tab":
+            // Not listed as a tool: lists the tabs, and shows or closes one by its place in the row.
+            if let i = a.num("show").map(Int.init), store.tabs.indices.contains(i) { store.showTab(store.tabs[i]) }
+            if let i = a.num("close").map(Int.init), store.tabs.indices.contains(i) { store.closeTab(store.tabs[i]) }
+            return CommandResult(json: ["tabs": store.tabs.map { $0.deletingPathExtension().lastPathComponent }, "current": store.project.name,
+                                        "tracks": store.project.tracks.count])
+        case "debug_stress":
+            // Not listed as a tool: bursts of quick pinches in time and in track height, some begun before the last has
+            // settled, each at one pointer place. After every burst it checks that the moment and the row under the pointer
+            // are still under it, that the zoom is what the pinches add up to, and that nothing is left half done.
+            guard let sv = Self.timelineScrollView(), let doc = sv.documentView else { return CommandResult(json: ["ok": false]) }
+            let side = Metrics.header + 1, pinned = Metrics.ruler + Metrics.film + Metrics.scene
+            var seed = UInt64(a.num("seed") ?? 7)
+            func rnd() -> Double { seed = seed &* 6364136223846793005 &+ 1442695040888963407; return Double((seed >> 33) % 100000) / 100000 }
+            func pick<T>(_ xs: [T]) -> T { xs[min(xs.count - 1, Int(rnd() * Double(xs.count)))] }
+            let live = store.zoomLive
+            func origin() -> CGPoint { sv.contentView.bounds.origin }
+            let vw = sv.contentView.bounds.width, vh = sv.contentView.bounds.height
+            func rows(_ z: Double) -> [CGFloat] {
+                var out: [CGFloat] = []
+                for row in store.project.rows {
+                    switch row {
+                    case .group: out.append(Metrics.group)
+                    case .track(let t):
+                        out.append(min(320, max(46, CGFloat(t.height ?? Double(Metrics.track)) * CGFloat(z))))
+                        if t.lane != nil { out.append(Metrics.lane) }
+                    }
+                }
+                return out
+            }
+            func anchor(_ cy: CGFloat, _ z: Double) -> (Int, CGFloat) {
+                var top: CGFloat = 0
+                let r = rows(z)
+                for (i, h) in r.enumerated() { if cy < top + h { return (i, (cy - top) / h) }; top += h }
+                return (r.count, cy - top)
+            }
+            func place(_ a: (Int, CGFloat), _ z: Double) -> CGFloat {
+                let r = rows(z)
+                if a.0 >= r.count { return r.reduce(0, +) + a.1 }
+                return r[..<a.0].reduce(0, +) + a.1 * r[a.0]
+            }
+            let reach = store.project.reach
+            let base = Double(doc.frame.width - side - 24) / reach / store.zoom
+            var failures: [String] = [], strict = 0, edges = 0, worstX = 0.0, worstY = 0.0, skipped = 0, held = 0
+            let bursts = Int(a.num("bursts") ?? 40)
+            for b in 0..<bursts {
+                // Settled start.
+                try await Task.sleep(nanoseconds: 700_000_000)
+                var px = CGFloat(side) + 40 + CGFloat(rnd()) * (vw - side - 80), py = pinned + 20 + CGFloat(rnd()) * (vh - pinned - 40)
+                var onClip: (time: Double, row: Int, name: String)?
+                if a.flag("clips") == true {
+                    // The pointer goes exactly on a clip: its start, middle or end, at a random place on screen.
+                    var index = 0
+                    var spots: [(Double, Int, String)] = []
+                    for row in store.project.rows {
+                        switch row {
+                        case .group: index += 1
+                        case .track(let t):
+                            for c in t.clips {
+                                for (f, w) in [(0.0, "start"), (0.5, "middle"), (1.0, "end")] { spots.append((c.start + c.duration * f, index, "\(c.name) \(w)")) }
+                            }
+                            index += 1 + (t.lane != nil ? 1 : 0)
+                        }
+                    }
+                    if !spots.isEmpty {
+                        let spot = pick(spots)
+                        let cx = CGFloat(spot.0 * base * store.zoom), cy = place((spot.1, 0.5), store.vzoom)
+                        let wantX = min(max(0, doc.frame.width - vw), max(0, cx + side - px)), wantY = min(max(0, doc.frame.height - vh), max(0, pinned + cy - py))
+                        sv.contentView.scroll(to: NSPoint(x: wantX, y: wantY)); sv.reflectScrolledClipView(sv.contentView)
+                        try await Task.sleep(nanoseconds: 200_000_000)
+                        px = cx + side - origin().x; py = pinned + cy - origin().y
+                        if px < side + 4 || px > vw - 4 || py < pinned + 4 || py > vh - 4 { skipped += 1; continue }
+                        onClip = spot
+                    }
+                }
+                var zoom = store.zoom, vz = store.vzoom
+                var simX = origin().x, simY = origin().y
+                var t = Double(simX + px - side) / (base * zoom)
+                var an = anchor(simY + py - pinned, vz)
+                var edge = false, notes: [String] = []
+                let count = pick([1, 2, 3, 5])
+                for _ in 0..<count {
+                    let up = rnd() < 0.5
+                    let f = pick([0.2, 0.45, 0.7, 1.5, 2.2, 4.0, 9.0])
+                    let n = pick([1, 2, 4, 8, 24]), dt = pick([1, 3, 8, 16])
+                    for i in 1...n {
+                        store.debugPinch?(CGFloat(exp(log(f) * Double(i) / Double(n))), CGPoint(x: px, y: py), up, false)
+                        try await Task.sleep(nanoseconds: UInt64(dt) * 1_000_000)
+                    }
+                    store.debugPinch?(CGFloat(f), CGPoint(x: px, y: py), up, true)
+                    notes.append("\(up ? "V" : "H")x\(f)/\(n)@\(dt)ms")
+                    if up {
+                        vz = min(3, max(0.75, vz * f))
+                        let ideal = place(an, vz) - (py - pinned)
+                        let maxY = max(0, pinned + rows(vz).reduce(0, +) + Metrics.master + 44 - vh)
+                        let y1 = min(maxY, max(0, ideal))
+                        if abs(y1 - ideal) > 0.5 { edge = true; an = anchor(y1 + py - pinned, vz) }
+                        simY = y1
+                    } else {
+                        zoom = min(store.zoomCap, max(1, zoom * f))
+                        let pps = base * zoom
+                        let ideal = CGFloat(t * pps) - (px - side)
+                        let maxX = max(0, CGFloat(reach * pps) + 24 + side - vw)
+                        let x1 = min(maxX, max(0, ideal))
+                        if abs(x1 - ideal) > 0.5 { edge = true; t = Double(x1 + px - side) / pps }
+                        simX = x1
+                    }
+                    try await Task.sleep(nanoseconds: UInt64(pick([0, 15, 50, 120, 400])) * 1_000_000)
+                }
+                try await Task.sleep(nanoseconds: 1_300_000_000)
+                let o = origin(), tol: CGFloat = edge ? CGFloat(a.num("edge_tol") ?? 90) : 2.5
+                var bad: [String] = []
+                if live.active { bad.append("drawing still up") }
+                if abs(store.zoom - zoom) > zoom * 0.002 { bad.append("zoom \(store.zoom) not \(zoom)") }
+                if abs(store.vzoom - vz) > 0.002 { bad.append("height \(store.vzoom) not \(vz)") }
+                if abs(o.x - simX) > tol { bad.append("x off by \(Int(o.x - simX))") }
+                if abs(o.y - simY) > tol { bad.append("y off by \(Int(o.y - simY))") }
+                if let c = onClip, !edge {
+                    // The same point of the same clip, where it is on screen now.
+                    let sx = CGFloat(c.time * base * store.zoom) + side - o.x, sy = pinned + place((c.row, 0.5), store.vzoom) - o.y
+                    if abs(sx - px) > 2.5 || abs(sy - py) > 2.5 { bad.append("\(c.name) is \(Int(sx - px)),\(Int(sy - py)) pt from the pointer") } else { held += 1 }
+                }
+                if edge { edges += 1 } else { strict += 1; worstX = max(worstX, Double(abs(o.x - simX))); worstY = max(worstY, Double(abs(o.y - simY))) }
+                if !bad.isEmpty { failures.append("#\(b) [\(notes.joined(separator: " "))]\(edge ? " edge" : ""): \(bad.joined(separator: "; "))") }
+            }
+            return CommandResult(json: ["bursts": bursts, "clip_held_under_pointer": held, "skipped": skipped, "exact": strict, "at_an_edge": edges, "worst_x": worstX, "worst_y": worstY, "failed": failures.count, "failures": failures])
         case "debug_scroll":
             // Not listed as a tool: zooms in, scrolls the timeline sideways for a few seconds and reports how often the main thread got a turn.
             if let to = a.num("to"), let sv = Self.timelineScrollView() {
@@ -630,7 +756,7 @@ final class Commands {
                 }
                 try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
                 store.debugPinch?(CGFloat(to), at, up, true)
-                return CommandResult(json: ["ok": true, "vzoom": store.vzoom, "zoom": store.zoom])
+                return CommandResult(json: ["ok": true, "vzoom": store.vzoom, "zoom": store.zoom, "first_draw_ms": store.zoomLive.firstDraw, "last_draw_ms": store.zoomLive.lastDraw])
             }
             let tall = a.flag("vertical") == true
             if tall {
@@ -641,6 +767,7 @@ final class Commands {
                 store.zoomLive.target = store.vzoom
                 store.zoomLive.vertical = true
             }
+            if !tall { store.zoomLive.y = Self.timelineScrollView()?.contentView.bounds.origin.y ?? 0 }
             store.zoomLive.active = true
             while CACurrentMediaTime() - start < seconds {
                 let u = (CACurrentMediaTime() - start) / seconds

@@ -504,6 +504,9 @@ struct SettingsSheet: View {
             }
             Toggle("Cables under the mixer's strips", isOn: $showCables)
                 .toggleStyle(.switch).controlSize(.small).font(.system(size: 12))
+            Picker("Arrangement background", selection: Binding(get: { Theme.Look.shared.laneTint }, set: { Theme.Look.shared.laneTint = $0 })) {
+                ForEach(Theme.Look.tints, id: \.1) { t in Text(t.0).tag(t.1) }
+            }
             Picker("Waveform colours", selection: Binding(get: { waveColour }, set: { v in
                 UserDefaults.standard.set(v, forKey: "waveColour")
                 waveColour = v

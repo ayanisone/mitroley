@@ -126,6 +126,7 @@ final class Player {
         isPlaying = false
         video.pause()
         seekVideo(time)
+        applyNow()
     }
 
     func seek(_ t: Double) {
@@ -159,8 +160,10 @@ final class Player {
             }
             tick += 1
             if tick % 30 == 0 { correctVideoDrift() }
+            // Automation moves with time, so the mix is set again on every tick while playing. At rest it only changes
+            // when something is edited or the playhead moves, and those set it themselves.
+            applyNow()
         }
-        applyNow()
 
         if let bus = graph.bus {
             // Gain reduction: deepest since the last tick, easing back to zero.

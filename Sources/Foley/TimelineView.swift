@@ -5,7 +5,7 @@ import AppKit
 struct TimelineView: View {
     @Environment(Store.self) private var store
     @State private var scroll = TimelineScroll()
-    @State private var pinch: (zoom: Double, vzoom: Double, time: Double, x: CGFloat, vertical: Bool, base: CGFloat, y: CGFloat, scrollY: CGFloat)?
+    @State private var pinch: (zoom: Double, vzoom: Double, time: Double, x: CGFloat, vertical: Bool, base: CGFloat, y: CGFloat, scrollY: CGFloat, scrollX: CGFloat, pps: Double)?
     private var live: ZoomLive { store.zoomLive }
     @State private var settle: Task<Void, Never>?
     /// Counts gestures, so the tidy-up after one cannot end the next.
@@ -38,7 +38,7 @@ struct TimelineView: View {
                 .clipped()
                 TimelineCorner()
                     .frame(width: Metrics.header, height: pinned)
-                    .background { GlassCover() }
+                    .background { PanelTint() }
                     .overlay(alignment: .trailing) { Rectangle().fill(Theme.line).frame(width: 1).offset(x: 1) }
             }
             .onChange(of: store.vzoom) { _, _ in store.relayoutTimeline?() }
@@ -63,6 +63,8 @@ struct TimelineView: View {
         .environment(scroll)
         .environment(live)
         .background(Theme.panel)
+        // The tint chosen for the arrangement, under the panel's own smoked glass.
+        .background(Theme.current.bg.opacity(Theme.Look.shared.laneTint))
     }
 
     /// A pinch reported by the scroll view. Laying out every clip on every tick of a pinch is too slow, so the pinch
@@ -72,7 +74,13 @@ struct TimelineView: View {
             era += 1
             let x = max(0, point.x - Metrics.header - 1)
             let y = max(0, point.y - (Metrics.ruler + Metrics.film + Metrics.scene))
-            pinch = (store.zoom, store.vzoom, Double(scroll.x + x) / pps, x, option, 1, y, max(0, scroll.y))
+            // Measured from what is on screen at this instant. Straight after another pinch that is still the pinch
+            // drawing, not the real timeline, which may not have been laid out or scrolled into place yet: measuring
+            // from the real one then made a quick second pinch jump somewhere else.
+            let shownPps = live.active ? live.pps : pps
+            let shownX = live.active ? live.x : scroll.x
+            let shownY = live.active ? live.y : max(0, scroll.y)
+            pinch = (store.zoom, store.vzoom, Double(shownX + x) / shownPps, x, option, 1, y, shownY, shownX, shownPps)
         }
         guard let start = pinch else { return }
         if ended {
@@ -92,9 +100,13 @@ struct TimelineView: View {
             // Keep the row under the pointer under the pointer.
             // Only track rows change height (bus rows and automation lanes do not, and tracks stop at a least and a most), so
             // the place is worked out row by row: the same row, the same share of the way down it, before and after.
-            live.y = max(0, rowOffset(start.scrollY + start.y, from: start.vzoom, to: target) - start.y)
-            live.pps = pps
-            live.x = scroll.x
+            // Never past the end of the timeline at the new height: shown past it while pinching, the view snapped back
+            // onto the last tracks when the fingers lifted.
+            let pinnedHeight = Metrics.ruler + Metrics.film + Metrics.scene
+            let furthest = max(0, pinnedHeight + rowOffset(.greatestFiniteMagnitude / 4, from: start.vzoom, to: target, total: true) + Metrics.master + 44 - scroll.height)
+            live.y = min(furthest, max(0, rowOffset(start.scrollY + start.y, from: start.vzoom, to: target) - start.y))
+            live.pps = start.pps
+            live.x = start.scrollX
             live.rows = target
             live.vertical = true
             live.active = true
@@ -108,20 +120,18 @@ struct TimelineView: View {
         live.target = zoom
         live.pps = Double(visible - 24) / duration * zoom
         // Keep the moment under the pointer under the pointer.
-        live.x = max(0, CGFloat(start.time * live.pps) - start.x)
+        // Never past the end of the timeline at the new zoom, for the same reason.
+        let widest = max(0, CGFloat(store.project.reach * live.pps) + 24 - scroll.width)
+        live.x = min(widest, max(0, CGFloat(start.time * live.pps) - start.x))
+        live.y = start.scrollY
         live.active = true
+        // Laid out for real only when the fingers lift. Laying the timeline out whenever the fingers paused made the
+        // pinch hitch and jump while it was still under way.
         settle?.cancel()
-        settle = Task {
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            guard !Task.isCancelled, let now = pinch else { return }
-            commitZoom()
-            // Carry on from the new zoom if the fingers are still down.
-            pinch = (store.zoom, store.vzoom, now.time, now.x, now.vertical, total, now.y, max(0, scroll.y))
-        }
     }
 
     /// Where a point `y` down the lanes at one track-height factor ends up at another.
-    private func rowOffset(_ y: CGFloat, from: Double, to: Double) -> CGFloat {
+    private func rowOffset(_ y: CGFloat, from: Double, to: Double, total: Bool = false) -> CGFloat {
         func height(_ t: Track, _ z: Double) -> CGFloat { min(320, max(46, CGFloat(t.height ?? Double(Metrics.track)) * CGFloat(z))) }
         var before: CGFloat = 0, after: CGFloat = 0
         func pass(_ a: CGFloat, _ b: CGFloat) -> CGFloat? {
@@ -138,35 +148,43 @@ struct TimelineView: View {
                 if t.lane != nil, let r = pass(Metrics.lane, Metrics.lane) { return r }
             }
         }
-        return after + (y - before)
+        // `total`: the height of all the rows at the new factor.
+        return total ? after : after + (y - before)
     }
 
     /// Lays the real timeline out at the zoom the pinch has reached, scrolled to where the drawing was.
     private func commitZoom() {
         guard let start = pinch else { return }
-        if start.vertical {
-            if live.target > 0, live.active {
-                store.vzoom = live.target
-                store.scrollTimeline?(CGPoint(x: scroll.x, y: live.y))
-                let mine = era
-                Task {
-                    try? await Task.sleep(nanoseconds: 90_000_000)
-                    // A gesture begun since then owns the drawing now; ending it from here left the names and the
-                    // lanes at different heights.
-                    guard mine == era, pinch == nil else { return }
-                    live.active = false
-                    live.vertical = false
+        let target = live.target
+        if live.active {
+            var want: CGPoint?
+            if start.vertical {
+                if target > 0 {
+                    store.vzoom = target
+                    want = CGPoint(x: start.scrollX, y: live.y)
                 }
+            } else if target >= 1 {
+                store.zoom = target
+                want = CGPoint(x: live.x, y: start.scrollY)
             }
-        } else if live.active {
-            store.zoom = live.target
-            store.scrollTimeline?(CGPoint(x: live.x, y: max(0, scroll.y)))
-            // The drawing stays up for a moment so the real timeline never shows half laid out.
+            if let want { store.scrollTimeline?(want) }
+            store.relayoutTimeline?()
+            // The drawing stays up until the real timeline has been laid out and scrolled to the same place (or half a
+            // second has gone by), so the hand-over never shows it half laid out or somewhere else.
             let mine = era
             Task {
-                try? await Task.sleep(nanoseconds: 80_000_000)
+                for _ in 0..<10 {
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                    guard let want else { break }
+                    if abs(scroll.x - want.x) < 1.5 && abs(scroll.y - want.y) < 1.5 { break }
+                }
+                // Time for the real timeline to be drawn at the new size underneath before it is uncovered. Uncovered
+                // straight away it was blank for a few frames: the dark flash after a pinch.
+                try? await Task.sleep(nanoseconds: 160_000_000)
+                // A gesture begun since then owns the drawing now.
                 guard mine == era, pinch == nil else { return }
                 live.active = false
+                live.vertical = false
             }
         }
         live.target = 0
@@ -1419,9 +1437,11 @@ struct WaveformView: View {
         if width <= 2048 {
             WaveCanvas(clip: clip, url: url, color: color, pps: pps, from: 0).equatable()
         } else if let w = scroll.window(start: CGFloat(clip.start * pps), width: width) {
-            WaveCanvas(clip: clip, url: url, color: color, pps: pps, from: w.lo).equatable()
-                .frame(width: w.hi - w.lo)
-                .offset(x: w.lo)
+            // Started on a whole half-point from the clip's start, the same grid the pinch drawing samples on.
+            let lo = (w.lo * 2).rounded(.down) / 2
+            WaveCanvas(clip: clip, url: url, color: color, pps: pps, from: lo).equatable()
+                .frame(width: w.hi - lo)
+                .offset(x: lo)
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             Color.clear

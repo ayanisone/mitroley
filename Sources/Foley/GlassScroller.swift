@@ -96,6 +96,7 @@ private struct GlassScrollerProbe: NSViewRepresentable {
     final class Probe: NSView {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
+            found = nil
             apply()
             // Mac settings can ask for bars that are always shown; keep ours when that changes.
             NotificationCenter.default.removeObserver(self)
@@ -103,18 +104,33 @@ private struct GlassScrollerProbe: NSViewRepresentable {
                 NotificationCenter.default.addObserver(self, selector: #selector(apply), name: NSScroller.preferredScrollerStyleDidChangeNotification, object: nil)
             }
         }
-        override func layout() { super.layout(); apply(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in self?.apply() } }
+        /// The scroll view found, kept so the window is searched once, not on every layout and redraw. Searching the
+        /// whole window each time made scrolling and editing slow wherever these bars were used.
+        private weak var found: NSScrollView?
+        private var searching = false
+        override func layout() {
+            super.layout()
+            if let s = found, s.window != nil { s.useGlassScrollers() } else { apply() }
+        }
         @objc func apply() {
+            if let s = found, s.window != nil { s.useGlassScrollers(); return }
+            guard !searching else { return }
+            searching = true
             DispatchQueue.main.async { [weak self] in
-                guard let self, let root = self.window?.contentView else { return }
+                guard let self else { return }
+                self.searching = false
+                guard let root = self.window?.contentView else { return }
                 let mine = self.convert(self.bounds, to: nil)
                 guard mine.width > 4, mine.height > 4 else { return }
                 // The scroll view that shares most of this place. SwiftUI's can be a little larger or smaller than the view
-                // it was made for, so a share of the area is asked for, not an exact fit.
+                // it was made for, so a share of the area is asked for, not an exact fit. Only scroll views that overlap
+                // this place are looked inside.
                 var best: (NSScrollView, CGFloat)?
                 func look(_ v: NSView) {
+                    let f = v.convert(v.bounds, to: nil)
+                    guard f.intersects(mine) else { return }
                     if let s = v as? NSScrollView, !(s is TimelineScrollView) {
-                        let f = s.convert(s.bounds, to: nil), both = f.intersection(mine)
+                        let both = f.intersection(mine)
                         let share = both.isNull ? 0 : both.width * both.height / max(1, max(f.width * f.height, mine.width * mine.height))
                         if share > 0.6, share > (best?.1 ?? 0) { best = (s, share) }
                         return
@@ -122,13 +138,13 @@ private struct GlassScrollerProbe: NSViewRepresentable {
                     for c in v.subviews { look(c) }
                 }
                 look(root)
-                best?.0.useGlassScrollers()
+                if let s = best?.0 { self.found = s; s.useGlassScrollers() }
             }
         }
         deinit { NotificationCenter.default.removeObserver(self) }
     }
     func makeNSView(context: Context) -> Probe { Probe() }
-    func updateNSView(_ v: Probe, context: Context) { v.apply() }
+    func updateNSView(_ v: Probe, context: Context) {}
 }
 
 extension View {

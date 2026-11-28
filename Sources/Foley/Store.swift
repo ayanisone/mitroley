@@ -308,6 +308,33 @@ final class Store {
         save()
     }
 
+    // MARK: Tabs
+
+    /// The sessions kept open as tabs along the top of the window. One is shown at a time; the others are saved on disk
+    /// and opened again when their tab is picked.
+    var tabs: [URL] = (UserDefaults.standard.stringArray(forKey: "openTabs") ?? [])
+        .filter { FileManager.default.fileExists(atPath: $0 + "/project.json") }.map { URL(fileURLWithPath: $0) } {
+        didSet { UserDefaults.standard.set(tabs.map(\.path), forKey: "openTabs") }
+    }
+
+    func isCurrent(_ tab: URL) -> Bool { tab.standardizedFileURL == folder.standardizedFileURL }
+
+    /// Shows another tab's session. The one being left is saved first.
+    func showTab(_ tab: URL) {
+        guard !isCurrent(tab) else { return }
+        if !open(tab) { tabs.removeAll { $0 == tab } }
+    }
+
+    /// Closes a tab. The session stays on disk. The last tab cannot be closed: there is always a session open.
+    func closeTab(_ tab: URL) {
+        guard tabs.count > 1, let i = tabs.firstIndex(of: tab) else { return }
+        if isCurrent(tab) {
+            let next = tabs[i == tabs.count - 1 ? i - 1 : i + 1]
+            guard open(next) else { return }
+        }
+        tabs.removeAll { $0 == tab }
+    }
+
     @discardableResult
     func open(_ url: URL) -> Bool {
         guard let data = try? Data(contentsOf: url.appendingPathComponent("project.json")) else {
@@ -335,6 +362,7 @@ final class Store {
     }
 
     private func reset() {
+        if !tabs.contains(where: { $0.standardizedFileURL == folder.standardizedFileURL }) { tabs.append(folder) }
         undoStack = []; redoStack = []
         canUndo = false; canRedo = false
         selection = .none

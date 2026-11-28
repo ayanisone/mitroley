@@ -12,14 +12,22 @@ struct ZoomPreview: View {
     @Environment(TimelineScroll.self) private var scroll
 
     var body: some View {
-        if live.active {
-            let pps = live.pps, x0 = live.x, scrollY = live.vertical ? live.y : scroll.y
-            Canvas { ctx, size in
-                draw(&ctx, size, pps: pps, x0: x0, scrollY: scrollY)
-            }
-            // No fill of its own: the lanes' own background is still there underneath, so nothing changes tone.
-            .allowsHitTesting(false)
+        // Always in place, drawing nothing while no pinch is under way. Made afresh at the start of each pinch it took a
+        // tenth of a second to appear, and the lanes, already hidden, were blank for that long: the dark flash.
+        let active = live.active
+        let pps = live.pps, x0 = live.x, scrollY = live.y
+        // The height factor is read here so every step of a height change redraws this. Scrolled to the top, nothing
+        // else changed between steps, and the lanes stood still while the track names beside them resized.
+        let rows = live.rows
+        Canvas { ctx, size in
+            guard active else { return }
+            _ = rows
+            let began = CACurrentMediaTime()
+            draw(&ctx, size, pps: pps, x0: x0, scrollY: scrollY)
+            live.lastDraw = (CACurrentMediaTime() - began) * 1000
         }
+        // No fill of its own: the lanes' own background is still there underneath, so nothing changes tone.
+        .allowsHitTesting(false)
     }
 
     private func draw(_ ctx: inout GraphicsContext, _ size: CGSize, pps: Double, x0: CGFloat, scrollY: CGFloat) {
@@ -127,7 +135,9 @@ struct ZoomPreview: View {
                 inside.fill(Path(CGRect(x: cx, y: top + 4 + 14, width: w, height: h - 14)), with: .color(.black.opacity(0.62)))
             }
             // Waveform, only the part on screen.
-            let from = max(0, -cx), to = min(w, size.width - cx)
+            // Sampled on the same grid as the real clip (whole half-points from the clip's start), so the wave does not
+            // change shape when the drawing hands back to the real timeline.
+            let from = (max(0, -cx) * 2).rounded(.down) / 2, to = min(w, size.width - cx)
             if let take = clip.take, to > from {
                 inside.translateBy(x: cx + from, y: top + 4 + 15)
                 WaveCanvas.draw(&inside, clip: clip, url: store.url(for: take), pps: pps, from: from, width: to - from, height: h - 18, color: color)
@@ -151,10 +161,27 @@ struct ZoomPreview: View {
                 inside.stroke(curve, with: .color(.white.opacity(0.8)), lineWidth: 1)
             }
             inside.translateBy(x: -cx, y: -(top + 4))
-            if w > 18 {
-                let name = clip.pending > 0 && empty ? "Generating…" : clip.name
-                inside.draw(Text(name).font(.system(size: 10.5, weight: .semibold)).foregroundColor(.white.opacity(0.92)),
-                            at: CGPoint(x: max(cx, 0) + 6, y: top + 4 + 7.5), anchor: .leading)
+            // The title as the real clip lays it out: at its own left edge, cut short with an ellipsis, with the take count
+            // and the loop mark at the right. Anything that only appeared when the fingers lifted read as a flicker.
+            var right = cx + w - 6
+            if clip.loop {
+                inside.draw(Text(Image(systemName: "repeat")).font(.system(size: 8, weight: .bold)).foregroundColor(.white.opacity(0.92)),
+                            at: CGPoint(x: right, y: top + 4 + 7.5), anchor: .trailing)
+                right -= 15
+            }
+            if clip.takes.count > 1 {
+                let tag = inside.resolve(Text("\(clip.activeTake + 1)/\(clip.takes.count)")
+                    .font(.system(size: 9, weight: .bold, design: .rounded).monospacedDigit()).foregroundColor(.white.opacity(0.92)))
+                let ts = tag.measure(in: CGSize(width: 100, height: 15))
+                let pill = CGRect(x: right - ts.width - 8, y: top + 4 + 7.5 - ts.height / 2, width: ts.width + 8, height: ts.height)
+                inside.fill(Path(roundedRect: pill, cornerRadius: pill.height / 2), with: .color(.black.opacity(0.3)))
+                inside.draw(tag, at: CGPoint(x: pill.midX, y: pill.midY), anchor: .center)
+                right -= pill.width + 5
+            }
+            let name = clip.pending > 0 && empty ? "Generating…" : clip.name
+            if right - (cx + 6) > 4 {
+                let fitted = Self.fit(name, in: right - (cx + 6), ctx: inside) { Text($0).font(.system(size: 10.5, weight: .semibold)).foregroundColor(.white.opacity(0.92)) }
+                inside.draw(fitted, at: CGPoint(x: cx + 6, y: top + 4 + 7.5), anchor: .leading)
             }
             ctx.stroke(Path(roundedRect: rect.insetBy(dx: 0.4, dy: 0.4), cornerRadius: 6, style: .continuous),
                        with: .color(selected ? Color.white.opacity(0.9) : color.opacity(empty ? 0.9 : 0.55)),
@@ -182,6 +209,18 @@ struct ZoomPreview: View {
             ctx.stroke(Path(roundedRect: rect.insetBy(dx: 0.375, dy: 0.375), cornerRadius: 4, style: .continuous), with: .color(.white.opacity(0.5)), lineWidth: 0.75)
         }
         ctx.fill(Path(CGRect(x: 0, y: top + height - 1, width: right, height: 1)), with: .color(Theme.line))
+    }
+
+    /// The text cut short with an ellipsis to fit `width`, as a one-line label does.
+    static func fit(_ s: String, in width: CGFloat, ctx: GraphicsContext, _ make: (String) -> Text) -> GraphicsContext.ResolvedText {
+        let whole = ctx.resolve(make(s))
+        if whole.measure(in: CGSize(width: 10_000, height: 40)).width <= width { return whole }
+        var lo = 0, hi = s.count
+        while lo < hi {
+            let mid = (lo + hi + 1) / 2
+            if ctx.resolve(make(String(s.prefix(mid)) + "…")).measure(in: CGSize(width: 10_000, height: 40)).width <= width { lo = mid } else { hi = mid - 1 }
+        }
+        return ctx.resolve(make(String(s.prefix(lo)).trimmingCharacters(in: .whitespaces) + "…"))
     }
 
     private func drawAutomation(_ ctx: inout GraphicsContext, _ track: Track, _ param: AutoParam, top: CGFloat, right: CGFloat,
@@ -223,6 +262,16 @@ struct ZoomPreview: View {
             under.closeSubpath()
             ctx.fill(under, with: .color(color.opacity(0.07)))
             ctx.stroke(path, with: .color(color.opacity(0.95)), style: StrokeStyle(lineWidth: 1, lineJoin: .round))
+            // The small handle in the middle of each stretch, as on the real lane.
+            for (a, b) in zip(keys, keys.dropFirst()) where a.curve != "hold" && (b.time - a.time) * pps > 26 {
+                let mid = (a.time + b.time) / 2
+                let hx = CGFloat(mid * pps) - x0
+                guard hx > -8 && hx < size.width + 8 else { continue }
+                let at = interpolate(keys, at: mid, log: param.isLog) ?? a.value
+                let ring = Path(ellipseIn: CGRect(x: hx - 3.5, y: y(at) - 3.5, width: 7, height: 7))
+                ctx.fill(ring, with: .color(.black.opacity(0.5)))
+                ctx.stroke(Path(ellipseIn: CGRect(x: hx - 3, y: y(at) - 3, width: 6, height: 6)), with: .color(color.opacity(0.7)), lineWidth: 1)
+            }
             for k in keys {
                 let kx = CGFloat(k.time * pps) - x0
                 guard kx > -8 && kx < size.width + 8 else { continue }
@@ -306,11 +355,17 @@ struct ZoomPreview: View {
                 inside.draw(tag, at: CGPoint(x: tx + 4, y: rect.midY), anchor: .leading)
                 tx += tw + 5
             }
+            // Cut short with an ellipsis where the block ends, as the real scene block does.
+            let room = rect.maxX - tx
             let name = inside.resolve(Text(scene.name).font(.system(size: 11, weight: .semibold)).foregroundColor(.white))
-            inside.draw(name, at: CGPoint(x: tx, y: rect.midY), anchor: .leading)
-            if let space, w > 150 {
-                let nw = name.measure(in: CGSize(width: 1000, height: 20)).width
-                inside.draw(Text(space.name).font(.system(size: 10.5)).foregroundColor(Theme.secondary), at: CGPoint(x: tx + nw + 5, y: rect.midY), anchor: .leading)
+            let nw = min(room, name.measure(in: CGSize(width: 1000, height: 20)).width)
+            if room > 4 {
+                inside.draw(Self.fit(scene.name, in: room, ctx: inside) { Text($0).font(.system(size: 11, weight: .semibold)).foregroundColor(.white) },
+                            at: CGPoint(x: tx, y: rect.midY), anchor: .leading)
+            }
+            if let space, w > 150, room - nw - 5 > 4 {
+                inside.draw(Self.fit(space.name, in: room - nw - 5, ctx: inside) { Text($0).font(.system(size: 10.5)).foregroundColor(Theme.secondary) },
+                            at: CGPoint(x: tx + nw + 5, y: rect.midY), anchor: .leading)
             }
             if selected { ctx.stroke(Path(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 5, style: .continuous), with: .color(.white.opacity(0.85)), lineWidth: 1) }
         }

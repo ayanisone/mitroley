@@ -11,6 +11,8 @@ import SwiftUI
     /// are redrawn once per step instead of on every scroll tick.
     private(set) var page = 0
     var width: CGFloat = 1400
+    /// The height of the part of the timeline on screen, ruler strip included.
+    var height: CGFloat = 600
 
     func set(x nx: CGFloat, y ny: CGFloat) {
         if nx != x { x = nx }
@@ -58,7 +60,13 @@ struct SlicedCanvas: View {
 /// A pinch in progress: the zoom the fingers have reached, before the real timeline has been laid out at it.
 @Observable final class ZoomLive {
     /// True while the one-pass drawing stands in for the real timeline.
-    var active = false
+    var active = false { didSet { if !active, shown { shown = false } } }
+    /// True once the one-pass drawing has really been drawn for this pinch. The real timeline stays on screen until
+    /// then: hidden the moment the pinch began, it left the lanes blank for the tenth of a second the first drawing takes.
+    var shown = false
+    /// How long the drawing last took, and how long its first one of this pinch took, in milliseconds.
+    @ObservationIgnored var lastDraw = 0.0
+    @ObservationIgnored var firstDraw = 0.0
     /// Points per second and scroll offset the drawing uses.
     var pps = 1.0
     var x: CGFloat = 0

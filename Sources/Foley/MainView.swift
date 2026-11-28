@@ -108,6 +108,7 @@ struct MainView: View {
         // No separate title-bar material: the picture side and the panel side each keep their own colour to the top.
         .toolbarBackground(.hidden, for: .windowToolbar)
         .toolbar {
+            ToolbarItem(placement: .principal) { SessionTabs() }
             ToolbarItemGroup(placement: .primaryAction) {
                 RoomButton()
                 Button { store.toggleDock("mixer") } label: { Image(systemName: "slider.vertical.3") }
@@ -594,5 +595,68 @@ struct PictureWindow: View {
         .onTapGesture(count: 2) { NSApp.keyWindow?.toggleFullScreen(nil) }
         .onAppear { store.pictureOut = true }
         .onDisappear { store.pictureOut = false }
+    }
+}
+
+
+/// The open sessions as tabs in the title bar. One is shown at a time; picking another saves this one and opens that.
+struct SessionTabs: View {
+    @Environment(Store.self) private var store
+    @State private var over: URL?
+
+    var body: some View {
+        // Every tab is a capsule 26 pt tall with the same 11 pt of room either side of its label, and the row has the same
+        // 3 pt inset at both ends, so the tabs sit evenly inside the title bar's own rounded holder. The close button
+        // lies over the tab's right end on hover and takes no room of its own, so labels never shift.
+        HStack(spacing: 2) {
+            ForEach(store.tabs, id: \.self) { tab in
+                let current = store.isCurrent(tab)
+                HStack(spacing: 6) {
+                    Image(systemName: "doc").font(.system(size: 10.5, weight: current ? .semibold : .medium))
+                        .foregroundStyle(current ? Color.white : Theme.tertiary)
+                    Text(tab.deletingPathExtension().lastPathComponent)
+                        .font(.system(size: 12, weight: current ? .semibold : .medium))
+                        .foregroundStyle(current ? Color.white : Theme.secondary)
+                        .lineLimit(1).truncationMode(.tail)
+                        .frame(maxWidth: 150)
+                        .fixedSize()
+                }
+                .padding(.horizontal, 11)
+                .frame(height: 26)
+                .background(current ? Color.white.opacity(0.14) : over == tab ? Color.white.opacity(0.06) : Color.clear, in: Capsule())
+                .overlay(alignment: .trailing) {
+                    if over == tab, store.tabs.count > 1 {
+                        Button { store.closeTab(tab) } label: {
+                            Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).foregroundStyle(.white)
+                                .frame(width: 18, height: 18)
+                                .background(Color(white: 0.28), in: Circle())
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(PressStyle(scale: 0.96))
+                        .padding(.trailing, 4)
+                        .hint("Close this tab. The session stays saved.")
+                    }
+                }
+                .contentShape(Capsule())
+                .onTapGesture { store.showTab(tab) }
+                .onHover { over = $0 ? tab : (over == tab ? nil : over) }
+                .contextMenu {
+                    Button("Close Tab") { store.closeTab(tab) }.disabled(store.tabs.count < 2)
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([tab]) }
+                }
+            }
+            Menu {
+                Button("New Session…") { store.newSessionAsking() }
+                Button("Open Session…") { Panels.openProject(store) }
+            } label: {
+                Image(systemName: "plus").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.secondary)
+                    .frame(width: 26, height: 26).contentShape(Circle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .hint("Open another session in a new tab")
+        }
+        .padding(.horizontal, 3)
     }
 }

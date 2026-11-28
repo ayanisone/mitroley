@@ -83,8 +83,14 @@ struct Splash: View {
         }
         func u32(_ v: Int) -> Data { withUnsafeBytes(of: UInt32(v).littleEndian) { Data($0) } }
         func u16(_ v: Int) -> Data { withUnsafeBytes(of: UInt16(v).littleEndian) { Data($0) } }
-        var wav = Data("RIFF".utf8) + u32(36 + pcm.count) + Data("WAVEfmt ".utf8) + u32(16) + u16(1) + u16(2) + u32(Int(rate)) + u32(Int(rate) * 4) + u16(4) + u16(16)
-        wav += Data("data".utf8) + u32(pcm.count) + pcm
+        // Added piece by piece: one long chain of + is more than the compiler will work out.
+        var wav = Data("RIFF".utf8)
+        wav.append(u32(36 + pcm.count))
+        wav.append(Data("WAVEfmt ".utf8))
+        for part in [u32(16), u16(1), u16(2), u32(Int(rate)), u32(Int(rate) * 4), u16(4), u16(16)] { wav.append(part) }
+        wav.append(Data("data".utf8))
+        wav.append(u32(pcm.count))
+        wav.append(pcm)
         return wav
     }
 }

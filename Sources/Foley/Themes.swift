@@ -60,6 +60,10 @@ enum Theme {
         /// How sliders are coloured: "gradient" (the track's colour, fading in), "accent" (the theme's colour, fading in)
         /// or "classic" (the flat colour and white knob they had before).
         var controls = UserDefaults.standard.string(forKey: "controlLook") ?? "gradient" { didSet { UserDefaults.standard.set(controls, forKey: "controlLook") } }
+        /// How much the arrangement's background is tinted with the theme's own dark: 0 lets the picture show through as
+        /// before, 1 is solid.
+        var laneTint = UserDefaults.standard.object(forKey: "laneTint") as? Double ?? 0 { didSet { UserDefaults.standard.set(laneTint, forKey: "laneTint") } }
+        static let tints: [(String, Double)] = [("See-through", 0), ("Light Tint", 0.35), ("Medium Tint", 0.6), ("Dark", 0.85), ("Solid", 1)]
         init() { refresh() }
         func refresh() { glass = Backdrops.picture(for: palette.id) != nil }
     }
@@ -196,6 +200,19 @@ enum ThemeThumbs {
 
 /// What the timeline's pinned strips sit on. With a picture behind the window it is frosted glass: whatever scrolls under it
 /// is blurred out of recognition and tinted with the panel colour. Without one it is the plain panel, which costs nothing.
+/// A steady tint with no blur, for the column of track names and the corner above it. Blurred glass there looked one
+/// way while scrolling and another while zooming (what is behind it changes during a pinch); a tint looks the same always.
+struct PanelTint: View {
+    var body: some View {
+        if Theme.Look.shared.glass {
+            // Solid: nothing of the timeline or the picture shows through it.
+            ZStack { Theme.current.bg; Theme.current.panel.opacity(0.9) }
+        } else {
+            Theme.panel
+        }
+    }
+}
+
 struct GlassCover: View {
     var body: some View {
         if Theme.Look.shared.glass {

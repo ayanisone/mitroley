@@ -146,6 +146,11 @@ struct FoleyApp: App {
                         Toggle(m.title, isOn: Binding(get: { MotionLevel.Choice.shared.level == m }, set: { if $0 { MotionLevel.Choice.shared.level = m; store.say("Motion · \(m.title)") } }))
                     }
                 }
+                Menu("Arrangement Background") {
+                    ForEach(Theme.Look.tints, id: \.1) { t in
+                        Toggle(t.0, isOn: Binding(get: { abs(Theme.Look.shared.laneTint - t.1) < 0.01 }, set: { if $0 { Theme.Look.shared.laneTint = t.1 } }))
+                    }
+                }
                 Button(store.vitalsOn ? "Hide Resource Monitor" : "Show Resource Monitor") { store.vitalsOn.toggle() }.keyboardShortcut("r", modifiers: [.command, .option])
                 Toggle("Hint Box", isOn: Binding(get: { UserDefaults.standard.object(forKey: "hintBox") as? Bool ?? true }, set: { UserDefaults.standard.set($0, forKey: "hintBox") }))
                 Button("Check the Mix at the Cuts…") { store.showCutCheck = true }.keyboardShortcut("k", modifiers: [.command, .option])

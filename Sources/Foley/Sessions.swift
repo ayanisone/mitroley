@@ -110,6 +110,8 @@ extension Store {
                 say("Could not rename: \(error.localizedDescription)", error: true)
                 return
             }
+            // Its tab keeps its place under the new name.
+            if let i = tabs.firstIndex(where: { isCurrent($0) }) { tabs[i] = target }
             guard open(target) else { return }
         }
         mutate { $0.name = name }
