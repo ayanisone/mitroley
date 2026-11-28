@@ -712,6 +712,43 @@ final class Commands {
                 if !bad.isEmpty { failures.append("#\(b) [\(notes.joined(separator: " "))]\(edge ? " edge" : ""): \(bad.joined(separator: "; "))") }
             }
             return CommandResult(json: ["bursts": bursts, "clip_held_under_pointer": held, "skipped": skipped, "exact": strict, "at_an_edge": edges, "worst_x": worstX, "worst_y": worstY, "failed": failures.count, "failures": failures])
+        case "debug_edit":
+            // Not listed as a tool: tries the cut-away and the automatic crossfade on real clips, reports what changed, and
+            // undoes each one.
+            var out: [String: Any] = [:]
+            if let t = store.project.tracks.first(where: { $0.clips.contains { $0.duration > 0.4 } }), let c = t.clips.first(where: { $0.duration > 0.4 }) {
+                store.cutAway(c.id, at: c.start + c.duration * 0.25)
+                let left = store.project.locate(clip: c.id).map { store.project.tracks[$0.track].clips[$0.clip] }
+                store.undo()
+                store.cutAway(c.id, at: c.start + c.duration * 0.75)
+                let right = store.project.locate(clip: c.id).map { store.project.tracks[$0.track].clips[$0.clip] }
+                store.undo()
+                let back = store.project.locate(clip: c.id).map { store.project.tracks[$0.track].clips[$0.clip] }
+                out["cut"] = ["was": [c.start, c.end], "cut_at_quarter": [left?.start ?? -1, left?.end ?? -1], "cut_at_three_quarters": [right?.start ?? -1, right?.end ?? -1], "restored": back == c]
+            }
+            if let t = store.project.tracks.first(where: { $0.clips.count > 1 && $0.crossfades().isEmpty }) {
+                let sorted = t.clips.sorted { $0.start < $1.start }
+                let a = sorted[0], b = sorted[1]
+                let before = store.project
+                store.beginGesture()
+                store.live { p in if let l = p.locate(clip: b.id) { p.tracks[l.track].clips[l.clip].start = max(a.start + 0.05, a.end - min(0.3, a.duration / 2, b.duration / 2)) } }
+                store.live { p in store.crossfadeOverlaps(of: b.id, in: &p) }
+                let la = store.project.locate(clip: a.id).map { store.project.tracks[$0.track].clips[$0.clip] }, lb = store.project.locate(clip: b.id).map { store.project.tracks[$0.track].clips[$0.clip] }
+                store.undo()
+                out["crossfade"] = ["overlap": (la?.end ?? 0) - (lb?.start ?? 0), "a_fade_out": la?.fadeOut ?? -1, "b_fade_in": lb?.fadeIn ?? -1, "restored": store.project == before]
+            }
+            store.player.returnOnStop = true
+            store.player.seek(2); store.player.play()
+            try await Task.sleep(nanoseconds: 1_200_000_000)
+            let during = store.player.time
+            store.player.pause()
+            let after = store.player.time
+            store.player.returnOnStop = false
+            store.player.seek(0)
+            out["return_on_stop"] = ["started": 2, "reached": during, "after_stop": after]
+            out["shape_up_from_equal_power"] = FadeShape.equalPower.bent(by: 20).rawValue
+            out["shape_down_two"] = FadeShape.equalPower.bent(by: -40).rawValue
+            return CommandResult(json: out)
         case "debug_scroll":
             // Not listed as a tool: zooms in, scrolls the timeline sideways for a few seconds and reports how often the main thread got a turn.
             if let to = a.num("to"), let sv = Self.timelineScrollView() {

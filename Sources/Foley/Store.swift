@@ -62,6 +62,8 @@ final class Store {
     @ObservationIgnored var scrollTimeline: ((CGPoint) -> Void)?
     /// Set by the timeline: re-measures its scrolling area after row heights change.
     @ObservationIgnored var relayoutTimeline: (() -> Void)?
+    /// The clip and time under the pointer while the cut tool is over a clip.
+    @ObservationIgnored var cutHover: (clip: UUID, time: Double)?
     /// The timeline's own pinch handler, so a test can drive exactly what the trackpad drives.
     @ObservationIgnored var debugPinch: ((CGFloat, CGPoint, Bool, Bool) -> Void)?
     var vzoom = 1.0 { didSet { if !vzoom.isFinite || vzoom < 0.75 || vzoom > 3 { vzoom = oldValue.isFinite ? min(3, max(0.75, vzoom.isFinite ? vzoom : oldValue)) : 1 } } }

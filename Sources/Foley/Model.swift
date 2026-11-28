@@ -239,6 +239,13 @@ struct Clip: Codable, Equatable, Identifiable {
 /// The curve of a fade. `gain` rises from 0 to 1; a fade-out reads it backwards. The renderer and the drawing both use it.
 enum FadeShape: String, Codable, CaseIterable, Identifiable {
     case equalPower, linear, sCurve, slow, fast
+    /// From the curve that stays quiet longest to the one that gets loud soonest, for dragging a fade up or down.
+    static let byRise: [FadeShape] = [.slow, .sCurve, .linear, .equalPower, .fast]
+    /// The curve `points` of upward drag away from this one (18 pt a step).
+    func bent(by points: CGFloat) -> FadeShape {
+        let i = Self.byRise.firstIndex(of: self) ?? 3
+        return Self.byRise[min(Self.byRise.count - 1, max(0, i + Int((points / 18).rounded())))]
+    }
     var id: String { rawValue }
     var title: String {
         switch self {

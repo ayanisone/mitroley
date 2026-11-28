@@ -267,18 +267,7 @@ struct Knob: View {
         .frame(width: size, height: size)
         .scaleEffect(dragging ? 1.06 : 1)
         .animation(.spring(response: 0.2, dampingFraction: 1), value: dragging)
-        .overlay(alignment: .bottom) {
-            if dragging {
-                Text(label(value))
-                    .font(.system(size: 10.5, weight: .semibold)).monospacedDigit().foregroundStyle(.white)
-                    .padding(.horizontal, 6).padding(.vertical, 2.5)
-                    .background(Color(white: 0.16), in: Capsule())
-                    .overlay(Capsule().strokeBorder(Color.white.opacity(0.14), lineWidth: 0.5))
-                    .shadow(color: .black.opacity(0.45), radius: 4, y: 2)
-                    .fixedSize().offset(y: 22).allowsHitTesting(false).transition(.opacity)
-                    .zIndex(5)
-            }
-        }
+        // No floating readout while turning: the value is already written under the knob.
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 0)
             .onChanged { g in

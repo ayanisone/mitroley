@@ -21,6 +21,10 @@ final class Player {
         graph.engine.mainMixerNode.outputVolume = filmOnly ? 0 : 1
     }
     var loop = false
+    /// When playback stops, the playhead goes back to where it started from (as with Pro Tools' "insertion follows
+    /// playback" switched off). Off: it stays where it stopped.
+    var returnOnStop = UserDefaults.standard.bool(forKey: "returnOnStop") { didSet { UserDefaults.standard.set(returnOnStop, forKey: "returnOnStop") } }
+    @ObservationIgnored private var startedAt = 0.0
     var masterL: Float = 0
     var masterR: Float = 0
     var trackLevels: [UUID: Float] = [:]
@@ -112,6 +116,7 @@ final class Player {
         loudness.reset()
         if let r = loopRange, time < r.lowerBound || time >= r.upperBound - 0.02 { time = r.lowerBound }
         if time >= project.extent - 0.02 { time = 0 }
+        startedAt = time
         startEngine()
         graph.apply(project, at: time, mode: monitor, snap: true)
         graph.seek(to: time, playing: true)
@@ -121,7 +126,7 @@ final class Player {
 
     func pause() {
         guard isPlaying else { return }
-        time = min(project.extent, graph.time)
+        time = returnOnStop ? startedAt : min(project.extent, graph.time)
         graph.seek(to: time, playing: false)
         isPlaying = false
         video.pause()

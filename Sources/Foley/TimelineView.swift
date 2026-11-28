@@ -999,7 +999,7 @@ struct CrossfadeView: View {
             case .ended: NSCursor.arrow.set()
             }
         }
-        .hint("Crossfade: drag an edge to change its length, drag the middle to move it")
+        .hint("Crossfade: drag an edge to change its length, the middle to move it, up or down to bend the curves")
         .offset(x: CGFloat(fade.start * pps), y: 4)
         .contextMenu {
             Menu("Shape") {
@@ -1026,11 +1026,13 @@ struct CrossfadeView: View {
                 }
                 guard let o = origin else { return }
                 if !moved {
-                    guard abs(g.translation.width) > 2 else { return }
+                    guard max(abs(g.translation.width), abs(g.translation.height)) > 2 else { return }
                     moved = true
                     store.beginGesture()
                 }
                 let dt = Double(g.translation.width) / pps
+                // Up and down bends both curves together.
+                let bent = o.a.outShape.bent(by: -g.translation.height)
                 let lo = min(o.start, o.earliestStart), hi = max(o.end, o.latestEnd)
                 var s = o.start, e = o.end
                 switch mode {
@@ -1041,7 +1043,11 @@ struct CrossfadeView: View {
                     s = o.start + d
                     e = o.end + d
                 }
-                let pair = o.applied(bStart: s, aEnd: e)
+                var pair = o.applied(bStart: s, aEnd: e)
+                if bent != o.a.outShape {
+                    pair.a.fadeOutShape = bent == .equalPower ? nil : bent
+                    pair.b.fadeInShape = bent == .equalPower ? nil : bent
+                }
                 store.live { p in Store.put(pair, in: &p) }
             }
             .onEnded { _ in origin = nil }
@@ -1061,6 +1067,8 @@ struct ClipView: View {
     @State private var moved = false
     @State private var snapped: Double?
     @State private var cut: Double?
+    /// Where the cut tool's guide line is, inside the clip.
+    @State private var cutX: CGFloat?
     @State private var hovering = false
 
     private var selected: Bool { store.selection == .clip(clip.id) }
@@ -1146,10 +1154,26 @@ struct ClipView: View {
             switch phase {
             case .active(let p):
                 hovering = true
+                if store.tool == .scissors {
+                    cutX = p.x
+                    store.cutHover = (clip.id, clip.start + Double(p.x) / pps)
+                } else if cutX != nil { cutX = nil; store.cutHover = nil }
                 (fadeHandle(at: p.x, p.y) != nil ? NSCursor.pointingHand : p.x < 7 || p.x > width - 7 ? NSCursor.resizeLeftRight : NSCursor.arrow).set()
             case .ended:
                 hovering = false
+                if cutX != nil { cutX = nil }
+                if store.cutHover?.clip == clip.id { store.cutHover = nil }
                 NSCursor.arrow.set()
+            }
+        }
+        // The cut tool's guide: where a click will split the clip. A right click removes the shorter side instead.
+        .overlay(alignment: .topLeading) {
+            if let cutX, store.tool == .scissors {
+                Rectangle().fill(Color(red: 0.35, green: 0.62, blue: 1.0))
+                    .frame(width: 1.5, height: height)
+                    .shadow(color: .black.opacity(0.5), radius: 1)
+                    .offset(x: cutX - 0.75)
+                    .allowsHitTesting(false)
             }
         }
         .offset(x: CGFloat(clip.start * pps), y: 4)
@@ -1249,7 +1273,8 @@ struct ClipView: View {
                 }
                 if mode == .tool { return }
                 if !moved {
-                    guard abs(mode == .gain ? g.translation.height : g.translation.width) > 2 else { return }
+                    let far = mode == .gain ? abs(g.translation.height) : mode == .fadeIn || mode == .fadeOut ? max(abs(g.translation.width), abs(g.translation.height)) : abs(g.translation.width)
+                    guard far > 2 else { return }
                     moved = true
                     store.beginGesture()
                 }
@@ -1267,8 +1292,16 @@ struct ClipView: View {
                     let at = Double(g.location.x) / pps
                     store.live { p in
                         guard let l = p.locate(clip: clip.id) else { return }
-                        if mode == .fadeIn { p.tracks[l.track].clips[l.clip].fadeIn = min(o.duration - o.fadeOut, max(0, at - o.start)) }
-                        else { p.tracks[l.track].clips[l.clip].fadeOut = min(o.duration - o.fadeIn, max(0, o.end - at)) }
+                        // Sideways sets the length; up and down bends the curve.
+                        if mode == .fadeIn {
+                            p.tracks[l.track].clips[l.clip].fadeIn = min(o.duration - o.fadeOut, max(0, at - o.start))
+                            let s = o.inShape.bent(by: -g.translation.height)
+                            p.tracks[l.track].clips[l.clip].fadeInShape = s == .equalPower ? nil : s
+                        } else {
+                            p.tracks[l.track].clips[l.clip].fadeOut = min(o.duration - o.fadeIn, max(0, o.end - at))
+                            let s = o.outShape.bent(by: -g.translation.height)
+                            p.tracks[l.track].clips[l.clip].fadeOutShape = s == .equalPower ? nil : s
+                        }
                     }
                     return
                 }
@@ -1298,8 +1331,13 @@ struct ClipView: View {
                         c.duration = min(longest, max(0.05, e - o.start))
                     case .fadeIn:
                         c.fadeIn = min(o.duration - o.fadeOut, max(0, o.fadeIn + dt))
+                        // Dragging the handle up or down bends the curve.
+                        let s = o.inShape.bent(by: -g.translation.height)
+                        c.fadeInShape = s == .equalPower ? nil : s
                     case .fadeOut:
                         c.fadeOut = min(o.duration - o.fadeIn, max(0, o.fadeOut - dt))
+                        let s = o.outShape.bent(by: -g.translation.height)
+                        c.fadeOutShape = s == .equalPower ? nil : s
                     case .gain, .tool:
                         break
                     }
@@ -1322,6 +1360,10 @@ struct ClipView: View {
                         guard let l = p.locate(clip: clip.id), let d = p.trackIndex(to) else { return }
                         p.tracks[d].clips.append(p.tracks[l.track].clips.remove(at: l.clip))
                     }
+                }
+                // Moved or trimmed into a neighbour on its track: the overlap becomes a crossfade.
+                if moved, mode == .move || mode == .left || mode == .right {
+                    store.live { p in store.crossfadeOverlaps(of: clip.id, in: &p) }
                 }
                 store.dropTrack = nil
                 origin = nil

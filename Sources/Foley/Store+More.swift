@@ -41,6 +41,28 @@ extension Store {
     }
 
     /// Cuts a clip in two at a time: the given clip, or the selected one at the playhead.
+    /// Cuts a clip at `t` and throws away its shorter side.
+    func cutAway(_ id: UUID, at t: Double) {
+        guard let l = project.locate(clip: id) else { return }
+        let c = project.tracks[l.track].clips[l.clip]
+        guard t > c.start + 0.01, t < c.end - 0.01 else { return }
+        mutate { p in
+            guard let l = p.locate(clip: id) else { return }
+            var c = p.tracks[l.track].clips[l.clip]
+            if t - c.start < c.end - t { c.setStart(t); c.fadeIn = min(c.fadeIn, 0.01) } else { c.duration = t - c.start; c.fadeOut = min(c.fadeOut, 0.01) }
+            c.fadeIn = min(c.fadeIn, c.duration); c.fadeOut = min(c.fadeOut, max(0, c.duration - c.fadeIn))
+            p.tracks[l.track].clips[l.clip] = c
+        }
+    }
+
+    /// Clips on one track that now overlap the clip `id` get a crossfade the length of the overlap, keeping their curves.
+    func crossfadeOverlaps(of id: UUID, in p: inout Project) {
+        guard let l = p.locate(clip: id) else { return }
+        for x in p.tracks[l.track].crossfades() where (x.a.id == id || x.b.id == id) && x.length > 0.005 {
+            Store.put(x.applied(bStart: x.start, aEnd: x.end), in: &p)
+        }
+    }
+
     func splitClip(_ target: UUID? = nil, at time: Double? = nil) {
         let t = time ?? player.time
         var id = target

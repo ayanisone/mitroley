@@ -376,6 +376,9 @@ struct ZoomPreview: View {
 extension ZoomLive {
     /// A track's height in the drawing: the height it is being zoomed to, or the one it has.
     @MainActor func height(_ t: Track, _ store: Store) -> CGFloat {
-        vertical ? min(320, max(46, CGFloat(t.height ?? Double(Metrics.track)) * CGFloat(target))) : store.rowHeight(t)
+        // `rows`, which keeps its value until the drawing steps aside. `target` is cleared the moment the fingers lift,
+        // and drawn from that every track shrank to its least height and slid out of view: the lanes went blank for
+        // as long as the drawing stayed up after a height change.
+        vertical ? min(320, max(46, CGFloat(t.height ?? Double(Metrics.track)) * CGFloat(rows))) : store.rowHeight(t)
     }
 }

@@ -152,6 +152,7 @@ struct FoleyApp: App {
                     }
                 }
                 Button(store.vitalsOn ? "Hide Resource Monitor" : "Show Resource Monitor") { store.vitalsOn.toggle() }.keyboardShortcut("r", modifiers: [.command, .option])
+                Toggle("Playhead Returns to Start on Stop", isOn: Binding(get: { store.player.returnOnStop }, set: { store.player.returnOnStop = $0 }))
                 Toggle("Hint Box", isOn: Binding(get: { UserDefaults.standard.object(forKey: "hintBox") as? Bool ?? true }, set: { UserDefaults.standard.set($0, forKey: "hintBox") }))
                 Button("Check the Mix at the Cuts…") { store.showCutCheck = true }.keyboardShortcut("k", modifiers: [.command, .option])
                 Divider()
@@ -236,6 +237,12 @@ enum Keys {
             // A press inside the library hands it the keys; a press anywhere else takes them back.
             if event.window?.attachedSheet == nil { store.library.active = store.library.hovered }
             return event
+        }
+        // The cut tool's right click: removes the shorter side of the clip under the pointer, from the cut line to its end.
+        NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { event in
+            guard store.tool == .scissors, let at = store.cutHover, event.window?.attachedSheet == nil else { return event }
+            store.cutAway(at.clip, at: at.time)
+            return nil
         }
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             // The sound library: up and down step through the sounds, also from its search box.
